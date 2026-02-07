@@ -1,3 +1,5 @@
+<img width="512" height="512" alt="CreaTura" src="https://github.com/user-attachments/assets/2778a646-0c03-43c1-b086-72607a65a369" />
+
 # CreaTura - Employee Scheduling App (Dockerized)
 
 ## What This App Does
