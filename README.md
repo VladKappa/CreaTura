@@ -11,6 +11,7 @@
 - Frontend -> Backend: HTTP REST (`POST /solve`, `GET /jobs`)
 - Backend -> Solver: HTTP REST (`POST /solve`)
 - Backend -> SQLite: SQLAlchemy ORM
+- Frontend -> Backend state sync: HTTP REST (`GET /state/schedule`, `PUT /state/schedule`)
 
 ## Run
 
@@ -31,6 +32,12 @@ Open:
 3. Backend forwards limits to solver `/solve`.
 4. Solver runs CP-SAT and returns `{x, y, objective}`.
 5. Backend stores result metadata in SQLite and responds to frontend.
+
+## UI State Persistence
+
+- Frontend auto-loads persisted scheduler state from backend on startup.
+- Frontend auto-saves scheduler edits to backend (debounced).
+- Backend stores this state in SQLite (`app_state` table), and `./backend/data` is volume-mounted in Docker, so state survives container rebuild/restart.
 
 ## Solver Scheduling Payload
 

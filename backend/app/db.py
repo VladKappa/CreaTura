@@ -1,7 +1,8 @@
 import os
+from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import Column, Integer, String, create_engine
+from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 
@@ -15,6 +16,14 @@ class SolveJob(Base):
     name = Column(String, nullable=False)
     objective = Column(Integer, nullable=False)
     status = Column(String, nullable=False, default="done")
+
+
+class AppState(Base):
+    __tablename__ = "app_state"
+
+    key = Column(String, primary_key=True, index=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")

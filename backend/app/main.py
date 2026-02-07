@@ -1,4 +1,5 @@
 import os
+import json
 from typing import Any
 
 import httpx
@@ -6,11 +7,12 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from .db import Base, SessionLocal, SolveJob, engine
+from .db import AppState, Base, SessionLocal, SolveJob, engine
 from .schemas import SolveRequest, SolveResponse
 
 
 SOLVER_URL = os.getenv("SOLVER_URL", "http://solver:9000")
+SCHEDULE_STATE_KEY = "schedule_ui_state_v1"
 
 app = FastAPI(title="Backend API")
 
@@ -93,3 +95,40 @@ def list_jobs(db: Session = Depends(get_db)):
         {"id": row.id, "name": row.name, "objective": row.objective, "status": row.status}
         for row in rows
     ]
+
+
+@app.get("/state/schedule")
+def get_schedule_state(db: Session = Depends(get_db)):
+    row = db.query(AppState).filter(AppState.key == SCHEDULE_STATE_KEY).first()
+    if not row:
+        return {"exists": False, "state": None, "updated_at": None}
+
+    try:
+        state = json.loads(row.value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="Stored schedule state is invalid JSON.") from exc
+
+    return {
+        "exists": True,
+        "state": state,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@app.put("/state/schedule")
+def put_schedule_state(payload: dict[str, Any], db: Session = Depends(get_db)):
+    try:
+        serialized = json.dumps(payload)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Schedule state payload is not JSON serializable.") from exc
+
+    row = db.query(AppState).filter(AppState.key == SCHEDULE_STATE_KEY).first()
+    if row is None:
+        row = AppState(key=SCHEDULE_STATE_KEY, value=serialized)
+        db.add(row)
+    else:
+        row.value = serialized
+
+    db.commit()
+    db.refresh(row)
+    return {"ok": True, "updated_at": row.updated_at.isoformat() if row.updated_at else None}
