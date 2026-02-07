@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.pyo
+
+*.db
+*.sqlite
+
+node_modules/
+dist/
+build/
+
+.DS_Store
+Thumbs.db
