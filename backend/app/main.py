@@ -13,7 +13,7 @@ from .services.state_store import get_json_state, put_json_state
 
 SCHEDULE_STATE_KEY = "schedule_ui_state_v1"
 
-app = FastAPI(title="Backend API")
+app = FastAPI(title="CreaTura Backend API")
 
 app.add_middleware(
     CORSMiddleware,

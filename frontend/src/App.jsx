@@ -508,8 +508,8 @@ export default function App() {
     <main className="app-shell single">
       <header className="panel app-header">
         <div>
-          <h1>Employee Scheduler</h1>
-          <p className="subtle">Manage shifts, assignments, and preferences for the week.</p>
+          <h1>CreaTura</h1>
+          <p className="subtle">Employee scheduling workspace for shifts, assignments, and preferences.</p>
           <p className="subtle">
             {isStateHydrating
               ? "Workspace persistence: loading..."

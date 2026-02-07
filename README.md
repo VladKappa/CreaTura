@@ -1,17 +1,28 @@
-# Dockerized 3-Layer App Starter
+# CreaTura - Employee Scheduling App (Dockerized)
 
-## Stack
+## What This App Does
 
-- Frontend: React (Vite) with hot reload
-- Backend: FastAPI + SQLite
-- Solver: FastAPI + OR-Tools CP-SAT
+`CreaTura` is a 3-layer employee scheduling system:
 
-## Service Communication
+- Frontend: React + Vite (week timeline UI, constraints editor, diagnostics)
+- Backend: FastAPI + SQLite (API gateway + persistence)
+- Solver: FastAPI + OR-Tools CP-SAT (schedule optimization)
 
-- Frontend -> Backend: HTTP REST (`POST /solve`, `GET /jobs`)
-- Backend -> Solver: HTTP REST (`POST /solve`)
-- Backend -> SQLite: SQLAlchemy ORM
-- Frontend -> Backend state sync: HTTP REST (`GET /state/schedule`, `PUT /state/schedule`)
+It supports interactive shift planning and solving directly from the UI.
+
+## Architecture
+
+- Frontend -> Backend (REST)
+- Backend -> Solver (REST)
+- Backend -> SQLite (`solve_jobs`, `app_state`)
+
+Main files:
+
+- `docker-compose.yml`
+- `frontend/src/App.jsx`
+- `backend/app/main.py`
+- `solver/app/main.py`
+- `solver/app/engine.py`
 
 ## Run
 
@@ -21,69 +32,118 @@ docker compose up --build
 
 Open:
 
-- Frontend: http://localhost:5173
-- Backend docs: http://localhost:8000/docs
-- Solver docs: http://localhost:9000/docs
+- CreaTura Frontend: `http://localhost:5173`
+- CreaTura Backend docs: `http://localhost:8000/docs`
+- CreaTura Solver docs: `http://localhost:9000/docs`
 
-## Flow
+## Health Endpoints
 
-1. User submits form in frontend.
-2. Frontend calls backend `/solve`.
-3. Backend forwards limits to solver `/solve`.
-4. Solver runs CP-SAT and returns `{x, y, objective}`.
-5. Backend stores result metadata in SQLite and responds to frontend.
+Yes, both services expose health checks:
 
-## UI State Persistence
+- Backend: `GET http://localhost:8000/health`
+- Solver: `GET http://localhost:9000/health`
 
-- Frontend auto-loads persisted scheduler state from backend on startup.
-- Frontend auto-saves scheduler edits to backend (debounced).
-- Backend stores this state in SQLite (`app_state` table), and `./backend/data` is volume-mounted in Docker, so state survives container rebuild/restart.
+Expected response:
 
-## Solver Scheduling Payload
+```json
+{ "status": "ok" }
+```
 
-The solver service now accepts a scheduling payload on `POST /solve` with:
+## Current UI Capabilities
 
-- `horizon`: `{start, days}`
-- `employees`: `{id, name, skills[]}`
-- `shifts`: `{day, date, type, start, end, required}`
-- `constraints.hard`: `forbid_shift`, `require_shift`
-- `constraints.soft`: `prefer_assignment`, `avoid_assignment` with `weight`
+- Weekly calendar (Mon-Sun), timeline per day
+- Multiple shifts per day, including overnight shifts (`+1d`)
+- Shift naming (custom name or default `Morning/Evening/Night`)
+- Default template popup (Mon-Sun)
+- Per-day custom overrides (copy/paste day shifts)
+- Employee management popup (create/select/remove)
+- Shift inspector (assign constraints for multiple employees on same shift)
+- Constraint labels:
+  - `Desired` (hard require)
+  - `Undesired` (hard forbid)
+  - `Preferred` (soft prefer, weighted)
+  - `Unpreferred` (soft avoid, weighted)
+- Solve button sends full payload to backend/solver
+- Solver result painted back on shift blocks (assigned employee names)
+- Diagnostics panel (objective breakdown + unsatisfied soft constraints)
+- Employee workload stats (interactive bars + pie charts for shifts/hours)
+- Workspace auto-save/load from SQLite via backend state endpoint
+
+## Solver Model (Current Behavior)
+
+Hard constraints:
+
+- Coverage: each shift gets exactly `required` employees
+- User hard constraints: `require_shift`, `forbid_shift`
+- Default hard rule: `max_worktime_in_row`
+  - Applies to consecutive shift chains (`gap == 0`)
+  - A single long shift may exceed the threshold
+  - Chain segments that exceed threshold are prevented
+
+Soft constraints:
+
+- User soft constraints: `prefer_assignment`, `avoid_assignment` (weighted)
+- Default soft rule: prefer minimum rest gap after shift
+- Optional feature toggle: balance worked hours across employees
 
 Solver output includes:
 
-- `status`: `optimal|feasible|infeasible`
+- `status`: `optimal | feasible | infeasible`
 - `objective`
-- `assignments`: list of shifts with assigned employees
-- `employee_load`: assigned shift counts per employee
-- `warnings`: unmatched constraint selectors
+- `assignments`
+- `employee_load`
+- `objective_breakdown`
+- `unsatisfied_soft_constraints`
+- `warnings`
 
-## Key Files
+## API Overview
 
-- `docker-compose.yml`
-- `frontend/src/App.jsx`
-- `backend/app/main.py`
-- `backend/app/db.py`
-- `solver/app/main.py`
+Backend (`backend/app/main.py`):
+
+- `GET /health`
+- `POST /solve` (legacy/simple endpoint)
+- `POST /solve/schedule` (main scheduler flow)
+- `GET /jobs`
+- `GET /state/schedule`
+- `PUT /state/schedule`
+
+Solver (`solver/app/main.py`):
+
+- `GET /health`
+- `POST /solve`
+
+## Persistence
+
+- UI state is persisted as JSON in SQLite (`app_state` table).
+- DB file lives in `./backend/data/app.db`.
+- Docker volume mapping keeps state across container rebuild/restart.
+
+## Dev Notes
+
+- Frontend HMR is configured for Docker (polling + explicit Vite server/HMR config).
+- Relevant files:
+  - `docker-compose.yml`
+  - `frontend/vite.config.js`
 
 ## Refactored Code Map
 
-### Frontend
+Frontend:
 
-- `frontend/src/App.jsx`: UI composition + orchestration.
-- `frontend/src/api/scheduleApi.js`: backend calls (`load/save state`, `solve`).
-- `frontend/src/config/constraintsConfig.js`: default constraint config + normalization.
-- `frontend/src/utils/persistedWorkspace.js`: persisted-state hydration/migration helpers.
-- `frontend/src/utils/solverPayload.js`: mapping UI shift constraints to solver payload.
+- `frontend/src/App.jsx`: page orchestration
+- `frontend/src/api/scheduleApi.js`: backend HTTP calls
+- `frontend/src/config/constraintsConfig.js`: defaults + normalization
+- `frontend/src/utils/persistedWorkspace.js`: persisted state hydration/migration
+- `frontend/src/utils/solverPayload.js`: UI -> solver payload mapping
 
-### Backend
+Backend:
 
-- `backend/app/main.py`: thin HTTP routes and dependency wiring.
-- `backend/app/services/solver_proxy.py`: outbound solver HTTP calls and error mapping.
-- `backend/app/services/state_store.py`: JSON workspace persistence in SQLite.
-- `backend/app/services/jobs.py`: solve job persistence/query helpers.
+- `backend/app/main.py`: thin routes
+- `backend/app/services/solver_proxy.py`: solver HTTP proxy
+- `backend/app/services/state_store.py`: persisted workspace state
+- `backend/app/services/jobs.py`: solve job persistence helpers
 
-### Solver
+Solver:
 
-- `solver/app/main.py`: thin FastAPI entrypoint.
-- `solver/app/models.py`: request schema and feature toggles.
-- `solver/app/engine.py`: CP-SAT model construction, objective, solve diagnostics.
+- `solver/app/main.py`: HTTP entrypoint
+- `solver/app/models.py`: request schema/toggles
+- `solver/app/engine.py`: CP-SAT model + solve + diagnostics

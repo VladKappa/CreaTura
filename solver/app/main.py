@@ -8,7 +8,7 @@ from .engine import solve_schedule_request
 from .models import SolverRequest
 
 
-app = FastAPI(title="Solver Service")
+app = FastAPI(title="CreaTura Solver Service")
 logger = logging.getLogger("uvicorn.error")
 
 
