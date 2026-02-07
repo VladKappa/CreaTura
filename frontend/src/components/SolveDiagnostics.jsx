@@ -15,7 +15,10 @@ function describeUnsatisfied(item) {
   if (item.constraint_type === "avoid_assignment") {
     return `${employee}: avoid assignment was violated on ${formatShift(item.shift)} (-${item.weight}).`;
   }
-  if (item.constraint_type === "min_rest_10h_after_shift") {
+  if (
+    item.constraint_type === "min_rest_after_shift" ||
+    item.constraint_type === "min_rest_10h_after_shift"
+  ) {
     return `${employee}: rest gap ${formatHours(item.rest_minutes)}h after ${formatShift(
       item.left_shift
     )} before ${formatShift(item.right_shift)} (required ${formatHours(
@@ -38,17 +41,60 @@ function describeUnsatisfied(item) {
 export default function SolveDiagnostics({ solveResult }) {
   if (!solveResult) return null;
 
+  const isInfeasible = solveResult.status === "infeasible";
   const breakdown = solveResult.objective_breakdown || {};
   const unsatisfied = solveResult.unsatisfied_soft_constraints || [];
   const reward = Number(breakdown.reward_points || 0);
   const penalty = Number(breakdown.penalty_points || 0);
-  const total = Number(solveResult.objective || 0);
+  const total =
+    typeof solveResult.objective === "number" && Number.isFinite(solveResult.objective)
+      ? solveResult.objective
+      : null;
+
+  if (isInfeasible) {
+    return (
+      <section className="panel solve-diagnostics">
+        <h3>Solve Diagnostics</h3>
+        <div className="solve-diag-infeasible">
+          <p className="solve-diag-infeasible-title">No feasible schedule found</p>
+          <p className="solve-diag-infeasible-reason">
+            {solveResult.reason ||
+              "Current hard constraints and required shift coverage cannot be satisfied together."}
+          </p>
+        </div>
+        {solveResult.applied_defaults?.length ? (
+          <p className="subtle">Default rules: {solveResult.applied_defaults.join(", ")}</p>
+        ) : null}
+        {solveResult.enabled_feature_toggles?.length ? (
+          <p className="subtle">
+            Enabled feature toggles: {solveResult.enabled_feature_toggles.join(", ")}
+          </p>
+        ) : null}
+        {solveResult.warnings?.length ? (
+          <div className="solve-diag-warnings">
+            {solveResult.warnings.map((warning, idx) => (
+              <p key={`${warning}-${idx}`} className="error-text">
+                {warning}
+              </p>
+            ))}
+          </div>
+        ) : (
+          <p className="subtle">No additional solver warnings were returned.</p>
+        )}
+        <ul className="solve-diag-actions">
+          <li>Relax one or more hard constraints (Desired/Undesired assignments).</li>
+          <li>Increase available employees or reduce required coverage per shift.</li>
+          <li>Adjust custom day overrides if overnight/default rules create conflicts.</li>
+        </ul>
+      </section>
+    );
+  }
 
   return (
     <section className="panel solve-diagnostics">
       <h3>Solve Diagnostics</h3>
       <div className="solve-diag-summary">
-        <span>Total objective: {total}</span>
+        <span>Total objective: {total ?? "-"}</span>
         <span>Rewards: +{reward}</span>
         <span>Penalties: {penalty}</span>
         <span>Unsatisfied soft constraints: {unsatisfied.length}</span>

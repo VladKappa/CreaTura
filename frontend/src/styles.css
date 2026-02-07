@@ -591,6 +591,10 @@ button {
   width: min(1200px, calc(100vw - 32px));
 }
 
+.modal-panel-mid {
+  width: min(860px, calc(100vw - 32px));
+}
+
 .modal-head {
   display: flex;
   align-items: center;
@@ -670,6 +674,29 @@ button {
   font-size: 0.9rem;
 }
 
+.constraints-config {
+  display: grid;
+  gap: 10px;
+}
+
+.constraint-config-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  background: #fbfffd;
+}
+
+.constraint-config-item h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.constraint-config-item label {
+  max-width: 260px;
+}
+
 .solve-diagnostics {
   gap: 8px;
 }
@@ -708,6 +735,34 @@ button {
 
 .solve-diag-list {
   margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  display: grid;
+  gap: 4px;
+}
+
+.solve-diag-infeasible {
+  border: 1px solid #f3cccc;
+  background: #fff4f4;
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.solve-diag-infeasible-title {
+  color: #8f2f2f;
+  font-weight: 800;
+}
+
+.solve-diag-infeasible-reason {
+  color: #7b3939;
+  font-size: 0.9rem;
+}
+
+.solve-diag-actions {
+  margin: 0;
   padding-left: 18px;
   color: var(--muted);
   font-size: 0.86rem;

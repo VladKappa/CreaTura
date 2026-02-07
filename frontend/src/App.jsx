@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import ConstraintsConfig from "./components/ConstraintsConfig";
 import EmployeeSidebar from "./components/EmployeeSidebar";
 import SolveDiagnostics from "./components/SolveDiagnostics";
 import SolveStats from "./components/SolveStats";
@@ -11,12 +12,24 @@ import {
   findNextAvailableShift,
   getDayShifts,
   makeEmployee,
+  nextShiftId,
   normalizeShiftConstraints,
   PREFERENCE_KEYS,
   validateShiftSet,
 } from "./utils/schedule";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const DEFAULT_CONSTRAINTS_CONFIG = {
+  noConsecutiveShiftsEnabled: true,
+  restGapEnabled: true,
+  restGapHours: 10,
+  restGapWeight: 5,
+  preferredWeight: 3,
+  unpreferredWeight: 4,
+  balanceWorkedHoursEnabled: false,
+  balanceWorkedHoursWeight: 2,
+  balanceWorkedHoursMaxSpanMultiplier: 1.5,
+};
 
 function removeErrorKey(setter, key) {
   setter((prev) => {
@@ -43,25 +56,163 @@ function makeShiftKey(date, type, start, end) {
   return `${date}__${type}__${start}__${end}`;
 }
 
-export default function App() {
-  const [newName, setNewName] = useState("");
-  const [newRole, setNewRole] = useState("");
-  const [employees, setEmployees] = useState([
+function cleanErrorText(err) {
+  return String(err).replace(/^Error:\s*/, "");
+}
+
+function buildInitialEmployees() {
+  return [
     makeEmployee("Alice Martin", "Cashier"),
     makeEmployee("Victor Hall", "Stock"),
     makeEmployee("Nina Carter", "Customer Service"),
     makeEmployee("Marcus Reed", "Manager"),
-  ]);
+  ];
+}
+
+function clamp(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function normalizeConstraintsConfig(rawConfig, legacyBalanceWorkedHours = false) {
+  const raw = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  return {
+    noConsecutiveShiftsEnabled:
+      raw.noConsecutiveShiftsEnabled === undefined
+        ? DEFAULT_CONSTRAINTS_CONFIG.noConsecutiveShiftsEnabled
+        : Boolean(raw.noConsecutiveShiftsEnabled),
+    restGapEnabled:
+      raw.restGapEnabled === undefined ? DEFAULT_CONSTRAINTS_CONFIG.restGapEnabled : Boolean(raw.restGapEnabled),
+    restGapHours: Math.round(
+      clamp(raw.restGapHours, 1, 24, DEFAULT_CONSTRAINTS_CONFIG.restGapHours)
+    ),
+    restGapWeight: Math.round(
+      clamp(raw.restGapWeight, 1, 100, DEFAULT_CONSTRAINTS_CONFIG.restGapWeight)
+    ),
+    preferredWeight: Math.round(
+      clamp(raw.preferredWeight, 1, 100, DEFAULT_CONSTRAINTS_CONFIG.preferredWeight)
+    ),
+    unpreferredWeight: Math.round(
+      clamp(raw.unpreferredWeight, 1, 100, DEFAULT_CONSTRAINTS_CONFIG.unpreferredWeight)
+    ),
+    balanceWorkedHoursEnabled:
+      raw.balanceWorkedHoursEnabled === undefined
+        ? Boolean(legacyBalanceWorkedHours)
+        : Boolean(raw.balanceWorkedHoursEnabled),
+    balanceWorkedHoursWeight: Math.round(
+      clamp(raw.balanceWorkedHoursWeight, 1, 100, DEFAULT_CONSTRAINTS_CONFIG.balanceWorkedHoursWeight)
+    ),
+    balanceWorkedHoursMaxSpanMultiplier: clamp(
+      raw.balanceWorkedHoursMaxSpanMultiplier,
+      0.1,
+      10,
+      DEFAULT_CONSTRAINTS_CONFIG.balanceWorkedHoursMaxSpanMultiplier
+    ),
+  };
+}
+
+function normalizeLoadedShift(rawShift, shiftIndex) {
+  const safeShift = rawShift && typeof rawShift === "object" ? rawShift : {};
+  return normalizeShiftConstraints({
+    id: typeof safeShift.id === "string" && safeShift.id ? safeShift.id : nextShiftId(),
+    start: typeof safeShift.start === "string" ? safeShift.start : "09:00",
+    end: typeof safeShift.end === "string" ? safeShift.end : "17:00",
+    name: typeof safeShift.name === "string" ? safeShift.name : defaultShiftName(shiftIndex),
+    constraints: Array.isArray(safeShift.constraints) ? safeShift.constraints : [],
+    assignedEmployeeId:
+      typeof safeShift.assignedEmployeeId === "string" ? safeShift.assignedEmployeeId : "",
+    preference: typeof safeShift.preference === "string" ? safeShift.preference : "",
+  });
+}
+
+function hydratePersistedState(rawState) {
+  if (!rawState || typeof rawState !== "object") return null;
+  if (!Array.isArray(rawState.employees) || rawState.employees.length === 0) return null;
+
+  const hydratedEmployees = rawState.employees.map((rawEmployee, employeeIndex) => {
+    const fallback = makeEmployee(`Employee ${employeeIndex + 1}`, "Team member");
+    const sourceDefaults = Array.isArray(rawEmployee?.defaultShiftsByDay)
+      ? rawEmployee.defaultShiftsByDay
+      : fallback.defaultShiftsByDay;
+    const defaultShiftsByDay = fallback.defaultShiftsByDay.map((fallbackDayShifts, dayIndex) => {
+      const sourceDayShifts = Array.isArray(sourceDefaults[dayIndex])
+        ? sourceDefaults[dayIndex]
+        : fallbackDayShifts;
+      return sourceDayShifts.map((shift, shiftIndex) => normalizeLoadedShift(shift, shiftIndex));
+    });
+
+    const overrides = {};
+    if (rawEmployee?.overrides && typeof rawEmployee.overrides === "object") {
+      Object.entries(rawEmployee.overrides).forEach(([iso, shifts]) => {
+        if (!Array.isArray(shifts)) return;
+        overrides[iso] = shifts.map((shift, shiftIndex) => normalizeLoadedShift(shift, shiftIndex));
+      });
+    }
+
+    return {
+      id:
+        typeof rawEmployee?.id === "string" && rawEmployee.id
+          ? rawEmployee.id
+          : fallback.id,
+      name:
+        typeof rawEmployee?.name === "string" && rawEmployee.name.trim()
+          ? rawEmployee.name
+          : fallback.name,
+      role: typeof rawEmployee?.role === "string" ? rawEmployee.role : fallback.role,
+      defaultShiftsByDay,
+      overrides,
+    };
+  });
+
+  const selectedCandidate =
+    typeof rawState.selectedEmployeeId === "string" ? rawState.selectedEmployeeId : null;
+  const selectedEmployeeId = hydratedEmployees.some((employee) => employee.id === selectedCandidate)
+    ? selectedCandidate
+    : hydratedEmployees[0]?.id || null;
+
+  const clipboard =
+    rawState.shiftClipboard &&
+    typeof rawState.shiftClipboard === "object" &&
+    typeof rawState.shiftClipboard.sourceLabel === "string" &&
+    Array.isArray(rawState.shiftClipboard.shifts)
+      ? {
+          sourceLabel: rawState.shiftClipboard.sourceLabel,
+          shifts: rawState.shiftClipboard.shifts.map((shift, index) =>
+            normalizeLoadedShift(shift, index)
+          ),
+        }
+      : null;
+
+  return {
+    employees: hydratedEmployees,
+    selectedEmployeeId,
+    constraintsConfig: normalizeConstraintsConfig(
+      rawState.constraintsConfig,
+      Boolean(rawState.balanceWorkedHours)
+    ),
+    shiftClipboard: clipboard,
+  };
+}
+
+export default function App() {
+  const [newName, setNewName] = useState("");
+  const [newRole, setNewRole] = useState("");
+  const [employees, setEmployees] = useState(() => buildInitialEmployees());
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(null);
   const [defaultErrors, setDefaultErrors] = useState({});
   const [overrideErrors, setOverrideErrors] = useState({});
   const [shiftClipboard, setShiftClipboard] = useState(null);
   const [isEmployeePanelOpen, setIsEmployeePanelOpen] = useState(false);
   const [isTemplatePopupOpen, setIsTemplatePopupOpen] = useState(false);
+  const [isConstraintsPopupOpen, setIsConstraintsPopupOpen] = useState(false);
   const [isSolving, setIsSolving] = useState(false);
   const [solveResult, setSolveResult] = useState(null);
   const [solveError, setSolveError] = useState("");
-  const [balanceWorkedHours, setBalanceWorkedHours] = useState(false);
+  const [constraintsConfig, setConstraintsConfig] = useState(DEFAULT_CONSTRAINTS_CONFIG);
+  const [isStateHydrating, setIsStateHydrating] = useState(true);
+  const [persistMessage, setPersistMessage] = useState("Loading saved workspace...");
+  const [persistError, setPersistError] = useState("");
 
   const week = useMemo(() => buildWeekFromToday(), []);
   const selectedEmployee =
@@ -75,6 +226,95 @@ export default function App() {
     });
     return mapped;
   }, [solveResult]);
+  const hasFeasibleSolve = Boolean(solveResult && solveResult.status !== "infeasible");
+  const persistedStatePayload = useMemo(
+    () => ({
+      version: 1,
+      employees,
+      selectedEmployeeId: selectedEmployeeId || employees[0]?.id || null,
+      constraintsConfig,
+      shiftClipboard,
+    }),
+    [employees, selectedEmployeeId, constraintsConfig, shiftClipboard]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPersistedState() {
+      try {
+        const resp = await fetch(`${API_URL}/state/schedule`);
+        if (!resp.ok) {
+          const detail = await resp.text();
+          throw new Error(`Load failed (${resp.status}): ${detail}`);
+        }
+
+        const payload = await resp.json();
+        if (cancelled) return;
+        const restored = hydratePersistedState(payload?.state);
+        if (payload?.exists && restored) {
+          setEmployees(restored.employees);
+          setSelectedEmployeeId(restored.selectedEmployeeId);
+          setConstraintsConfig(restored.constraintsConfig);
+          setShiftClipboard(restored.shiftClipboard);
+          setPersistMessage(
+            payload?.updated_at
+              ? `Loaded saved workspace (${new Date(payload.updated_at).toLocaleString()})`
+              : "Loaded saved workspace."
+          );
+        } else {
+          setPersistMessage("No saved workspace yet. Changes will be auto-saved.");
+        }
+        setPersistError("");
+      } catch (err) {
+        if (cancelled) return;
+        setPersistError(cleanErrorText(err));
+        setPersistMessage("Workspace persistence unavailable.");
+      } finally {
+        if (!cancelled) setIsStateHydrating(false);
+      }
+    }
+
+    loadPersistedState();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isStateHydrating) return;
+
+    const controller = new AbortController();
+    const saveDelay = setTimeout(async () => {
+      try {
+        const resp = await fetch(`${API_URL}/state/schedule`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(persistedStatePayload),
+          signal: controller.signal,
+        });
+        if (!resp.ok) {
+          const detail = await resp.text();
+          throw new Error(`Save failed (${resp.status}): ${detail}`);
+        }
+        const payload = await resp.json();
+        if (controller.signal.aborted) return;
+        const savedAt = payload?.updated_at
+          ? new Date(payload.updated_at).toLocaleTimeString()
+          : "just now";
+        setPersistMessage(`Saved at ${savedAt}`);
+        setPersistError("");
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setPersistError(cleanErrorText(err));
+      }
+    }, 500);
+
+    return () => {
+      clearTimeout(saveDelay);
+      controller.abort();
+    };
+  }, [isStateHydrating, persistedStatePayload]);
 
   useEffect(() => {
     setDefaultErrors({});
@@ -90,7 +330,7 @@ export default function App() {
   useEffect(() => {
     setSolveResult(null);
     setSolveError("");
-  }, [employees, selectedEmployeeId, balanceWorkedHours]);
+  }, [employees, selectedEmployeeId, constraintsConfig]);
 
   function updateEmployee(employeeId, updater) {
     setEmployees((prev) =>
@@ -438,9 +678,9 @@ export default function App() {
         } else if (constraint.preference === "desired") {
           hard.push({ type: "require_shift", ...base });
         } else if (constraint.preference === "unpreferred") {
-          soft.push({ type: "avoid_assignment", ...base, weight: 5 });
+          soft.push({ type: "avoid_assignment", ...base, weight: constraintsConfig.unpreferredWeight });
         } else if (constraint.preference === "preferred") {
-          soft.push({ type: "prefer_assignment", ...base, weight: 3 });
+          soft.push({ type: "prefer_assignment", ...base, weight: constraintsConfig.preferredWeight });
         }
       });
     });
@@ -462,8 +702,14 @@ export default function App() {
         soft,
       },
       feature_toggles: {
-        balance_worked_hours: balanceWorkedHours,
-        balance_worked_hours_max_span_multiplier: 1.5,
+        no_consecutive_shifts_per_employee: constraintsConfig.noConsecutiveShiftsEnabled,
+        min_rest_after_shift_enabled: constraintsConfig.restGapEnabled,
+        min_rest_after_shift_hours: constraintsConfig.restGapHours,
+        min_rest_after_shift_weight: constraintsConfig.restGapWeight,
+        balance_worked_hours: constraintsConfig.balanceWorkedHoursEnabled,
+        balance_worked_hours_weight: constraintsConfig.balanceWorkedHoursWeight,
+        balance_worked_hours_max_span_multiplier:
+          constraintsConfig.balanceWorkedHoursMaxSpanMultiplier,
       },
     };
   }
@@ -509,6 +755,13 @@ export default function App() {
         <div>
           <h1>Employee Scheduler</h1>
           <p className="subtle">Manage shifts, assignments, and preferences for the week.</p>
+          <p className="subtle">
+            {isStateHydrating
+              ? "Workspace persistence: loading..."
+              : persistError
+                ? `Workspace persistence error: ${persistError}`
+                : `Workspace persistence: ${persistMessage}`}
+          </p>
         </div>
         <div className="toolbar-actions">
           <button
@@ -530,14 +783,9 @@ export default function App() {
           >
             Default Template
           </button>
-          <label className="checkbox dense">
-            <input
-              type="checkbox"
-              checked={balanceWorkedHours}
-              onChange={(e) => setBalanceWorkedHours(e.target.checked)}
-            />
-            Balance Hours
-          </label>
+          <button type="button" className="quiet" onClick={() => setIsConstraintsPopupOpen(true)}>
+            Constraints Configure
+          </button>
         </div>
       </header>
 
@@ -548,7 +796,7 @@ export default function App() {
           </div>
         ) : null}
         {solveResult ? <SolveDiagnostics solveResult={solveResult} /> : null}
-        {solveResult ? <SolveStats solveResult={solveResult} employees={employees} /> : null}
+        {hasFeasibleSolve ? <SolveStats solveResult={solveResult} employees={employees} /> : null}
         {!selectedEmployee ? (
           <div className="panel">
             <h2>No employee selected</h2>
@@ -629,6 +877,24 @@ export default function App() {
               clipboardLabel={shiftClipboard?.sourceLabel || ""}
               showTitle={false}
             />
+          </section>
+        </div>
+      ) : null}
+
+      {isConstraintsPopupOpen ? (
+        <div className="modal-backdrop" onClick={() => setIsConstraintsPopupOpen(false)}>
+          <section className="modal-panel modal-panel-mid" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3>Constraints Configure</h3>
+              <button
+                type="button"
+                className="quiet mini-btn"
+                onClick={() => setIsConstraintsPopupOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <ConstraintsConfig config={constraintsConfig} onChange={setConstraintsConfig} />
           </section>
         </div>
       ) : null}
