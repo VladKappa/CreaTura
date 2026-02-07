@@ -19,7 +19,8 @@ export default function ConstraintsConfig({ config, onChange }) {
           <h4>Max Worktime In A Row</h4>
           <p className="subtle">
             Hard rule. Limits continuous back-to-back assignment time for each employee.
-            Example: with 8h max, two 4h shifts in a row are allowed, two 8h shifts are not.
+            Applies to shift chains (not a single shift): with 8h max, two 4h shifts in a row are
+            allowed, two 8h shifts are not.
           </p>
         </div>
         <label className="checkbox dense">

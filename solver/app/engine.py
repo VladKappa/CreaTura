@@ -132,10 +132,12 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
         )
 
     # Motivatie:
-    # "Max worktime in a row" trebuie sa permita lanturi mici (ex: 4h + 4h),
-    # dar sa taie lanturile continue care depasesc pragul.
-    # De aceea construim ferestre de ture consecutive fara pauza (gap 0)
-    # si interzicem asignarea completa a oricarei ferestre care depaseste limita.
+    # "Max worktime in a row" limiteaza doar LANTUL de ture consecutive.
+    # Un shift individual poate depasi pragul,
+    # dar nu permitem sa fie lipit de alte ture daca lantul rezultat
+    # depaseste limita configurata.
+    # Implementare: construim ferestre consecutive (gap 0) si penalizam
+    # doar ferestrele cu cel putin 2 ture care depasesc pragul.
     if payload.feature_toggles.max_worktime_in_row_enabled:
         max_worktime_minutes = payload.feature_toggles.max_worktime_in_row_hours * 60
         sorted_shift_indices = sorted(range(num_shifts), key=lambda idx: shift_order_key(payload.shifts[idx]))
@@ -144,8 +146,6 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
         for start_pos, start_shift_idx in enumerate(sorted_shift_indices):
             running_minutes = shift_durations[start_shift_idx]
             window = [start_shift_idx]
-            if running_minutes > max_worktime_minutes:
-                violating_windows.append(window.copy())
 
             for next_pos in range(start_pos + 1, len(sorted_shift_indices)):
                 prev_shift_idx = sorted_shift_indices[next_pos - 1]
@@ -156,7 +156,7 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
 
                 window.append(next_shift_idx)
                 running_minutes += shift_durations[next_shift_idx]
-                if running_minutes > max_worktime_minutes:
+                if len(window) >= 2 and running_minutes > max_worktime_minutes:
                     violating_windows.append(window.copy())
 
         for employee_idx in range(num_employees):
