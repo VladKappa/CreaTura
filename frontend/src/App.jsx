@@ -550,8 +550,6 @@ export default function App() {
             <p className="error-text">{solveError}</p>
           </div>
         ) : null}
-        {solveResult ? <SolveDiagnostics solveResult={solveResult} /> : null}
-        {hasFeasibleSolve ? <SolveStats solveResult={solveResult} employees={employees} /> : null}
         {!selectedEmployee ? (
           <div className="panel">
             <h2>No employee selected</h2>
@@ -578,6 +576,8 @@ export default function App() {
             />
           </>
         )}
+        {solveResult ? <SolveDiagnostics solveResult={solveResult} /> : null}
+        {hasFeasibleSolve ? <SolveStats solveResult={solveResult} employees={employees} /> : null}
       </section>
 
       {isEmployeePanelOpen ? (

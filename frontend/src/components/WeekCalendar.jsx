@@ -101,7 +101,7 @@ export default function WeekCalendar({
 
       <div className={`week-main${isInspectorVisible ? "" : " no-inspector"}`}>
         <div className="week-scroll">
-          <div className="week-grid">
+          <div className="week-grid" style={{ "--week-days": week.length }}>
             {week.map((day, index) => {
               const override = employee.overrides[day.iso] || null;
               const usesOverride = Boolean(override);
