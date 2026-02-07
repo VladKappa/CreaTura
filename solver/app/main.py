@@ -59,6 +59,10 @@ class Constraints(BaseModel):
 
 
 class FeatureToggles(BaseModel):
+    no_consecutive_shifts_per_employee: bool = True
+    min_rest_after_shift_enabled: bool = True
+    min_rest_after_shift_hours: int = Field(10, ge=1, le=24)
+    min_rest_after_shift_weight: int = Field(5, ge=1, le=100)
     balance_worked_hours: bool = False
     balance_worked_hours_weight: int = Field(2, ge=1, le=100)
     balance_worked_hours_max_span_multiplier: float = Field(1.5, ge=0.1, le=10.0)
@@ -125,7 +129,8 @@ def solve(payload: SolverRequest):
     started_at = time.perf_counter()
     logger.info(
         "[%s] solve start horizon_start=%s days=%d employees=%d shifts=%d hard=%d soft=%d "
-        "balance_worked_hours=%s balance_span_multiplier=%.2f",
+        "no_consecutive=%s min_rest_enabled=%s min_rest_hours=%d min_rest_weight=%d "
+        "balance_worked_hours=%s balance_span_multiplier=%.2f balance_weight=%d",
         request_id,
         payload.horizon.start,
         payload.horizon.days,
@@ -133,8 +138,13 @@ def solve(payload: SolverRequest):
         len(payload.shifts),
         len(payload.constraints.hard),
         len(payload.constraints.soft),
+        payload.feature_toggles.no_consecutive_shifts_per_employee,
+        payload.feature_toggles.min_rest_after_shift_enabled,
+        payload.feature_toggles.min_rest_after_shift_hours,
+        payload.feature_toggles.min_rest_after_shift_weight,
         payload.feature_toggles.balance_worked_hours,
         payload.feature_toggles.balance_worked_hours_max_span_multiplier,
+        payload.feature_toggles.balance_worked_hours_weight,
     )
 
     if not payload.employees:
@@ -169,8 +179,8 @@ def solve(payload: SolverRequest):
     num_employees = len(payload.employees)
     num_shifts = len(payload.shifts)
     horizon_start_ord = date.fromisoformat(payload.horizon.start).toordinal()
-    min_desired_rest_minutes = 10 * 60
-    short_rest_penalty_weight = 4
+    min_desired_rest_minutes = payload.feature_toggles.min_rest_after_shift_hours * 60
+    short_rest_penalty_weight = payload.feature_toggles.min_rest_after_shift_weight
 
     model = cp_model.CpModel()
     assign: dict[tuple[int, int], cp_model.IntVar] = {}
@@ -186,13 +196,19 @@ def solve(payload: SolverRequest):
         )
 
     # Default hard rule: an employee cannot work two consecutive shifts in timeline order.
-    sorted_shift_indices = sorted(range(num_shifts), key=lambda idx: shift_order_key(payload.shifts[idx]))
-    for employee_idx in range(num_employees):
-        for left_shift_idx, right_shift_idx in zip(sorted_shift_indices, sorted_shift_indices[1:]):
-            model.add(assign[(employee_idx, left_shift_idx)] + assign[(employee_idx, right_shift_idx)] <= 1)
+    if payload.feature_toggles.no_consecutive_shifts_per_employee:
+        sorted_shift_indices = sorted(range(num_shifts), key=lambda idx: shift_order_key(payload.shifts[idx]))
+        for employee_idx in range(num_employees):
+            for left_shift_idx, right_shift_idx in zip(sorted_shift_indices, sorted_shift_indices[1:]):
+                model.add(assign[(employee_idx, left_shift_idx)] + assign[(employee_idx, right_shift_idx)] <= 1)
 
     warnings: list[str] = []
     enabled_feature_toggles: list[str] = []
+    applied_default_rules: list[str] = []
+    if payload.feature_toggles.no_consecutive_shifts_per_employee:
+        applied_default_rules.append("no_consecutive_shifts_per_employee")
+    if payload.feature_toggles.min_rest_after_shift_enabled:
+        applied_default_rules.append("prefer_min_rest_after_shift")
 
     # Hard constraints.
     for hard in payload.constraints.hard:
@@ -279,66 +295,67 @@ def solve(payload: SolverRequest):
                     }
                 )
 
-    # Default soft rule: prefer at least 10h rest between any two worked shifts for an employee.
-    shift_windows = [
-        (
-            shift_start_abs_minutes(shift, horizon_start_ord),
-            shift_end_abs_minutes(shift, horizon_start_ord),
-        )
-        for shift in payload.shifts
-    ]
-    short_rest_pairs = []
-    for left_shift_idx in range(num_shifts):
-        _, left_end = shift_windows[left_shift_idx]
-        for right_shift_idx in range(num_shifts):
-            if left_shift_idx == right_shift_idx:
-                continue
-            right_start, _ = shift_windows[right_shift_idx]
-            rest_minutes = right_start - left_end
-            if 0 <= rest_minutes < min_desired_rest_minutes:
-                short_rest_pairs.append((left_shift_idx, right_shift_idx, rest_minutes))
+    # Default soft rule: prefer minimum rest between any two worked shifts for an employee.
+    if payload.feature_toggles.min_rest_after_shift_enabled:
+        shift_windows = [
+            (
+                shift_start_abs_minutes(shift, horizon_start_ord),
+                shift_end_abs_minutes(shift, horizon_start_ord),
+            )
+            for shift in payload.shifts
+        ]
+        short_rest_pairs = []
+        for left_shift_idx in range(num_shifts):
+            _, left_end = shift_windows[left_shift_idx]
+            for right_shift_idx in range(num_shifts):
+                if left_shift_idx == right_shift_idx:
+                    continue
+                right_start, _ = shift_windows[right_shift_idx]
+                rest_minutes = right_start - left_end
+                if 0 <= rest_minutes < min_desired_rest_minutes:
+                    short_rest_pairs.append((left_shift_idx, right_shift_idx, rest_minutes))
 
-    for employee_idx in range(num_employees):
-        for left_shift_idx, right_shift_idx, _ in short_rest_pairs:
-            both_assigned = model.new_bool_var(
-                f"short_rest_e{employee_idx}_s{left_shift_idx}_s{right_shift_idx}"
-            )
-            model.add(both_assigned <= assign[(employee_idx, left_shift_idx)])
-            model.add(both_assigned <= assign[(employee_idx, right_shift_idx)])
-            model.add(
-                both_assigned
-                >= assign[(employee_idx, left_shift_idx)] + assign[(employee_idx, right_shift_idx)] - 1
-            )
-            left_shift = payload.shifts[left_shift_idx]
-            right_shift = payload.shifts[right_shift_idx]
-            rest_minutes = shift_windows[right_shift_idx][0] - shift_windows[left_shift_idx][1]
-            objective_term_refs.append(
-                {
-                    "var": both_assigned,
-                    "coefficient": -short_rest_penalty_weight,
-                    "source": "default_soft_constraint",
-                    "constraint_type": "min_rest_10h_after_shift",
-                    "employee_id": payload.employees[employee_idx].id,
-                    "employee_name": payload.employees[employee_idx].name,
-                    "weight": short_rest_penalty_weight,
-                    "rest_minutes": rest_minutes,
-                    "required_rest_minutes": min_desired_rest_minutes,
-                    "left_shift": {
-                        "day": left_shift.day,
-                        "date": left_shift.date,
-                        "type": left_shift.type,
-                        "start": left_shift.start,
-                        "end": left_shift.end,
-                    },
-                    "right_shift": {
-                        "day": right_shift.day,
-                        "date": right_shift.date,
-                        "type": right_shift.type,
-                        "start": right_shift.start,
-                        "end": right_shift.end,
-                    },
-                }
-            )
+        for employee_idx in range(num_employees):
+            for left_shift_idx, right_shift_idx, _ in short_rest_pairs:
+                both_assigned = model.new_bool_var(
+                    f"short_rest_e{employee_idx}_s{left_shift_idx}_s{right_shift_idx}"
+                )
+                model.add(both_assigned <= assign[(employee_idx, left_shift_idx)])
+                model.add(both_assigned <= assign[(employee_idx, right_shift_idx)])
+                model.add(
+                    both_assigned
+                    >= assign[(employee_idx, left_shift_idx)] + assign[(employee_idx, right_shift_idx)] - 1
+                )
+                left_shift = payload.shifts[left_shift_idx]
+                right_shift = payload.shifts[right_shift_idx]
+                rest_minutes = shift_windows[right_shift_idx][0] - shift_windows[left_shift_idx][1]
+                objective_term_refs.append(
+                    {
+                        "var": both_assigned,
+                        "coefficient": -short_rest_penalty_weight,
+                        "source": "default_soft_constraint",
+                        "constraint_type": "min_rest_after_shift",
+                        "employee_id": payload.employees[employee_idx].id,
+                        "employee_name": payload.employees[employee_idx].name,
+                        "weight": short_rest_penalty_weight,
+                        "rest_minutes": rest_minutes,
+                        "required_rest_minutes": min_desired_rest_minutes,
+                        "left_shift": {
+                            "day": left_shift.day,
+                            "date": left_shift.date,
+                            "type": left_shift.type,
+                            "start": left_shift.start,
+                            "end": left_shift.end,
+                        },
+                        "right_shift": {
+                            "day": right_shift.day,
+                            "date": right_shift.date,
+                            "type": right_shift.type,
+                            "start": right_shift.start,
+                            "end": right_shift.end,
+                        },
+                    }
+                )
 
     # Optional feature toggle: balance total worked hours across employees.
     balance_hours_span_var = None
@@ -425,10 +442,7 @@ def solve(payload: SolverRequest):
             "status": "infeasible",
             "reason": "No feasible assignment satisfies current hard constraints and coverage.",
             "warnings": warnings,
-            "applied_defaults": [
-                "no_consecutive_shifts_per_employee",
-                "prefer_min_rest_10h_after_shift",
-            ],
+            "applied_defaults": applied_default_rules,
             "objective": None,
             "assignments": [],
             "employee_load": [],
@@ -543,7 +557,7 @@ def solve(payload: SolverRequest):
         int(solver.objective_value) if objective_term_refs else 0,
         total_assigned_slots,
         len(warnings),
-        "no_consecutive_shifts_per_employee,prefer_min_rest_10h_after_shift",
+        ",".join(applied_default_rules) if applied_default_rules else "none",
         ",".join(enabled_feature_toggles) if enabled_feature_toggles else "none",
     )
 
@@ -551,10 +565,7 @@ def solve(payload: SolverRequest):
         "status": status_text,
         "objective": int(solver.objective_value) if objective_term_refs else 0,
         "warnings": warnings,
-        "applied_defaults": [
-            "no_consecutive_shifts_per_employee",
-            "prefer_min_rest_10h_after_shift",
-        ],
+        "applied_defaults": applied_default_rules,
         "assignments": assignments,
         "employee_load": employee_load,
         "enabled_feature_toggles": enabled_feature_toggles,
