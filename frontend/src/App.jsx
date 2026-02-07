@@ -1,36 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
+import { fetchScheduleState, saveScheduleState, solveSchedule } from "./api/scheduleApi";
 import ConstraintsConfig from "./components/ConstraintsConfig";
 import EmployeeSidebar from "./components/EmployeeSidebar";
 import SolveDiagnostics from "./components/SolveDiagnostics";
 import SolveStats from "./components/SolveStats";
 import TemplateGrid from "./components/TemplateGrid";
 import WeekCalendar from "./components/WeekCalendar";
+import DEFAULT_CONSTRAINTS_CONFIG from "./config/constraintsConfig";
 import {
   buildWeekFromToday,
   cloneShifts,
-  defaultShiftName,
   findNextAvailableShift,
   getDayShifts,
   makeEmployee,
-  nextShiftId,
   normalizeShiftConstraints,
   PREFERENCE_KEYS,
   validateShiftSet,
 } from "./utils/schedule";
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-const DEFAULT_CONSTRAINTS_CONFIG = {
-  maxWorktimeInRowEnabled: true,
-  maxWorktimeInRowHours: 8,
-  restGapEnabled: true,
-  restGapHours: 10,
-  restGapWeight: 5,
-  preferredWeight: 3,
-  unpreferredWeight: 4,
-  balanceWorkedHoursEnabled: false,
-  balanceWorkedHoursWeight: 2,
-  balanceWorkedHoursMaxSpanMultiplier: 1.5,
-};
+import {
+  buildInitialEmployees,
+  cleanErrorText,
+  hydratePersistedState,
+} from "./utils/persistedWorkspace";
+import { buildSolvePayload, makeShiftKey } from "./utils/solverPayload";
 
 function removeErrorKey(setter, key) {
   setter((prev) => {
@@ -43,163 +35,6 @@ function removeErrorKey(setter, key) {
 
 function setErrorKey(setter, key, value) {
   setter((prev) => ({ ...prev, [key]: value }));
-}
-
-function roleToSkills(role) {
-  const value = (role || "").trim();
-  if (!value || value.toLowerCase() === "team member") {
-    return [];
-  }
-  return [value.toLowerCase().replace(/\s+/g, "_")];
-}
-
-function makeShiftKey(date, type, start, end) {
-  return `${date}__${type}__${start}__${end}`;
-}
-
-function cleanErrorText(err) {
-  return String(err).replace(/^Error:\s*/, "");
-}
-
-function buildInitialEmployees() {
-  return [
-    makeEmployee("Alice Martin", "Cashier"),
-    makeEmployee("Victor Hall", "Stock"),
-    makeEmployee("Nina Carter", "Customer Service"),
-    makeEmployee("Marcus Reed", "Manager"),
-  ];
-}
-
-function clamp(value, min, max, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, parsed));
-}
-
-function normalizeConstraintsConfig(rawConfig, legacyBalanceWorkedHours = false) {
-  const raw = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
-  const legacyNoConsecutive = raw.noConsecutiveShiftsEnabled;
-  return {
-    maxWorktimeInRowEnabled:
-      raw.maxWorktimeInRowEnabled === undefined
-        ? legacyNoConsecutive === undefined
-          ? DEFAULT_CONSTRAINTS_CONFIG.maxWorktimeInRowEnabled
-          : Boolean(legacyNoConsecutive)
-        : Boolean(raw.maxWorktimeInRowEnabled),
-    maxWorktimeInRowHours: Math.round(
-      clamp(raw.maxWorktimeInRowHours, 1, 24, DEFAULT_CONSTRAINTS_CONFIG.maxWorktimeInRowHours)
-    ),
-    restGapEnabled:
-      raw.restGapEnabled === undefined ? DEFAULT_CONSTRAINTS_CONFIG.restGapEnabled : Boolean(raw.restGapEnabled),
-    restGapHours: Math.round(
-      clamp(raw.restGapHours, 1, 24, DEFAULT_CONSTRAINTS_CONFIG.restGapHours)
-    ),
-    restGapWeight: Math.round(
-      clamp(raw.restGapWeight, 1, 100, DEFAULT_CONSTRAINTS_CONFIG.restGapWeight)
-    ),
-    preferredWeight: Math.round(
-      clamp(raw.preferredWeight, 1, 100, DEFAULT_CONSTRAINTS_CONFIG.preferredWeight)
-    ),
-    unpreferredWeight: Math.round(
-      clamp(raw.unpreferredWeight, 1, 100, DEFAULT_CONSTRAINTS_CONFIG.unpreferredWeight)
-    ),
-    balanceWorkedHoursEnabled:
-      raw.balanceWorkedHoursEnabled === undefined
-        ? Boolean(legacyBalanceWorkedHours)
-        : Boolean(raw.balanceWorkedHoursEnabled),
-    balanceWorkedHoursWeight: Math.round(
-      clamp(raw.balanceWorkedHoursWeight, 1, 100, DEFAULT_CONSTRAINTS_CONFIG.balanceWorkedHoursWeight)
-    ),
-    balanceWorkedHoursMaxSpanMultiplier: clamp(
-      raw.balanceWorkedHoursMaxSpanMultiplier,
-      0.1,
-      10,
-      DEFAULT_CONSTRAINTS_CONFIG.balanceWorkedHoursMaxSpanMultiplier
-    ),
-  };
-}
-
-function normalizeLoadedShift(rawShift, shiftIndex) {
-  const safeShift = rawShift && typeof rawShift === "object" ? rawShift : {};
-  return normalizeShiftConstraints({
-    id: typeof safeShift.id === "string" && safeShift.id ? safeShift.id : nextShiftId(),
-    start: typeof safeShift.start === "string" ? safeShift.start : "09:00",
-    end: typeof safeShift.end === "string" ? safeShift.end : "17:00",
-    name: typeof safeShift.name === "string" ? safeShift.name : defaultShiftName(shiftIndex),
-    constraints: Array.isArray(safeShift.constraints) ? safeShift.constraints : [],
-    assignedEmployeeId:
-      typeof safeShift.assignedEmployeeId === "string" ? safeShift.assignedEmployeeId : "",
-    preference: typeof safeShift.preference === "string" ? safeShift.preference : "",
-  });
-}
-
-function hydratePersistedState(rawState) {
-  if (!rawState || typeof rawState !== "object") return null;
-  if (!Array.isArray(rawState.employees) || rawState.employees.length === 0) return null;
-
-  const hydratedEmployees = rawState.employees.map((rawEmployee, employeeIndex) => {
-    const fallback = makeEmployee(`Employee ${employeeIndex + 1}`, "Team member");
-    const sourceDefaults = Array.isArray(rawEmployee?.defaultShiftsByDay)
-      ? rawEmployee.defaultShiftsByDay
-      : fallback.defaultShiftsByDay;
-    const defaultShiftsByDay = fallback.defaultShiftsByDay.map((fallbackDayShifts, dayIndex) => {
-      const sourceDayShifts = Array.isArray(sourceDefaults[dayIndex])
-        ? sourceDefaults[dayIndex]
-        : fallbackDayShifts;
-      return sourceDayShifts.map((shift, shiftIndex) => normalizeLoadedShift(shift, shiftIndex));
-    });
-
-    const overrides = {};
-    if (rawEmployee?.overrides && typeof rawEmployee.overrides === "object") {
-      Object.entries(rawEmployee.overrides).forEach(([iso, shifts]) => {
-        if (!Array.isArray(shifts)) return;
-        overrides[iso] = shifts.map((shift, shiftIndex) => normalizeLoadedShift(shift, shiftIndex));
-      });
-    }
-
-    return {
-      id:
-        typeof rawEmployee?.id === "string" && rawEmployee.id
-          ? rawEmployee.id
-          : fallback.id,
-      name:
-        typeof rawEmployee?.name === "string" && rawEmployee.name.trim()
-          ? rawEmployee.name
-          : fallback.name,
-      role: typeof rawEmployee?.role === "string" ? rawEmployee.role : fallback.role,
-      defaultShiftsByDay,
-      overrides,
-    };
-  });
-
-  const selectedCandidate =
-    typeof rawState.selectedEmployeeId === "string" ? rawState.selectedEmployeeId : null;
-  const selectedEmployeeId = hydratedEmployees.some((employee) => employee.id === selectedCandidate)
-    ? selectedCandidate
-    : hydratedEmployees[0]?.id || null;
-
-  const clipboard =
-    rawState.shiftClipboard &&
-    typeof rawState.shiftClipboard === "object" &&
-    typeof rawState.shiftClipboard.sourceLabel === "string" &&
-    Array.isArray(rawState.shiftClipboard.shifts)
-      ? {
-          sourceLabel: rawState.shiftClipboard.sourceLabel,
-          shifts: rawState.shiftClipboard.shifts.map((shift, index) =>
-            normalizeLoadedShift(shift, index)
-          ),
-        }
-      : null;
-
-  return {
-    employees: hydratedEmployees,
-    selectedEmployeeId,
-    constraintsConfig: normalizeConstraintsConfig(
-      rawState.constraintsConfig,
-      Boolean(rawState.balanceWorkedHours)
-    ),
-    shiftClipboard: clipboard,
-  };
 }
 
 export default function App() {
@@ -250,13 +85,7 @@ export default function App() {
 
     async function loadPersistedState() {
       try {
-        const resp = await fetch(`${API_URL}/state/schedule`);
-        if (!resp.ok) {
-          const detail = await resp.text();
-          throw new Error(`Load failed (${resp.status}): ${detail}`);
-        }
-
-        const payload = await resp.json();
+        const payload = await fetchScheduleState();
         if (cancelled) return;
         const restored = hydratePersistedState(payload?.state);
         if (payload?.exists && restored) {
@@ -294,17 +123,11 @@ export default function App() {
     const controller = new AbortController();
     const saveDelay = setTimeout(async () => {
       try {
-        const resp = await fetch(`${API_URL}/state/schedule`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(persistedStatePayload),
-          signal: controller.signal,
-        });
-        if (!resp.ok) {
-          const detail = await resp.text();
-          throw new Error(`Save failed (${resp.status}): ${detail}`);
-        }
-        const payload = await resp.json();
+        // Motivatie:
+        // Salvam debounced intreg workspace-ul, nu pe campuri separate.
+        // Asa evitam "partial writes" in timpul editarii rapide si
+        // mentinem o singura versiune consistenta a starii din UI.
+        const payload = await saveScheduleState(persistedStatePayload, controller.signal);
         if (controller.signal.aborted) return;
         const savedAt = payload?.updated_at
           ? new Date(payload.updated_at).toLocaleTimeString()
@@ -650,80 +473,13 @@ export default function App() {
     setOverrideDayShifts(day, next);
   }
 
-  function buildSolvePayload() {
-    if (!selectedEmployee) return null;
-
-    const plannedShifts = week.flatMap((day) => {
-      const dayShifts = getDayShifts(selectedEmployee, day);
-      const usesOverride = Boolean(selectedEmployee.overrides[day.iso]);
-      return dayShifts.map((shift, index) => ({
-        day: day.label,
-        date: day.iso,
-        type: shift.name?.trim() || defaultShiftName(index),
-        start: shift.start,
-        end: shift.end,
-        required: 1,
-        source: usesOverride ? "override" : "default",
-        constraints: shift.constraints || [],
-      }));
-    });
-
-    const hard = [];
-    const soft = [];
-
-    plannedShifts.forEach((shift) => {
-      shift.constraints.forEach((constraint) => {
-        const base = {
-          employee_id: constraint.employeeId,
-          day: shift.day,
-          date: shift.date,
-          shift_type: shift.type,
-        };
-
-        if (constraint.preference === "undesired") {
-          hard.push({ type: "forbid_shift", ...base });
-        } else if (constraint.preference === "desired") {
-          hard.push({ type: "require_shift", ...base });
-        } else if (constraint.preference === "unpreferred") {
-          soft.push({ type: "avoid_assignment", ...base, weight: constraintsConfig.unpreferredWeight });
-        } else if (constraint.preference === "preferred") {
-          soft.push({ type: "prefer_assignment", ...base, weight: constraintsConfig.preferredWeight });
-        }
-      });
-    });
-
-    return {
-      horizon: {
-        start: week[0]?.iso || "",
-        days: week.length,
-      },
-      employees: employees.map((emp) => {
-        const skills = roleToSkills(emp.role);
-        return skills.length
-          ? { id: emp.id, name: emp.name, skills }
-          : { id: emp.id, name: emp.name };
-      }),
-      shifts: plannedShifts.map(({ constraints, ...rest }) => rest),
-      constraints: {
-        hard,
-        soft,
-      },
-      feature_toggles: {
-        max_worktime_in_row_enabled: constraintsConfig.maxWorktimeInRowEnabled,
-        max_worktime_in_row_hours: constraintsConfig.maxWorktimeInRowHours,
-        min_rest_after_shift_enabled: constraintsConfig.restGapEnabled,
-        min_rest_after_shift_hours: constraintsConfig.restGapHours,
-        min_rest_after_shift_weight: constraintsConfig.restGapWeight,
-        balance_worked_hours: constraintsConfig.balanceWorkedHoursEnabled,
-        balance_worked_hours_weight: constraintsConfig.balanceWorkedHoursWeight,
-        balance_worked_hours_max_span_multiplier:
-          constraintsConfig.balanceWorkedHoursMaxSpanMultiplier,
-      },
-    };
-  }
-
   async function onSolveClick() {
-    const payload = buildSolvePayload();
+    const payload = buildSolvePayload({
+      selectedEmployee,
+      week,
+      employees,
+      constraintsConfig,
+    });
     if (!payload) {
       console.warn("No selected employee. Cannot build solve payload.");
       return;
@@ -735,16 +491,7 @@ export default function App() {
     setSolveError("");
     setSolveResult(null);
     try {
-      const resp = await fetch(`${API_URL}/solve/schedule`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!resp.ok) {
-        const detail = await resp.text();
-        throw new Error(`Solve failed (${resp.status}): ${detail}`);
-      }
-      const result = await resp.json();
+      const result = await solveSchedule(payload);
       setSolveResult(result);
       console.log("Solver response:");
       console.log(JSON.stringify(result, null, 2));

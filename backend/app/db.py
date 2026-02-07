@@ -27,6 +27,10 @@ class AppState(Base):
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
+# Motivatie:
+# - folderul `./data` este montat ca volum in Docker,
+# - baza SQLite ramane persistenta intre restart/rebuild,
+# - `check_same_thread=False` este necesar pentru accesul din worker-ele FastAPI.
 Path("./data").mkdir(parents=True, exist_ok=True)
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

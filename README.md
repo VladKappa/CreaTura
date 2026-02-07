@@ -64,3 +64,26 @@ Solver output includes:
 - `backend/app/main.py`
 - `backend/app/db.py`
 - `solver/app/main.py`
+
+## Refactored Code Map
+
+### Frontend
+
+- `frontend/src/App.jsx`: UI composition + orchestration.
+- `frontend/src/api/scheduleApi.js`: backend calls (`load/save state`, `solve`).
+- `frontend/src/config/constraintsConfig.js`: default constraint config + normalization.
+- `frontend/src/utils/persistedWorkspace.js`: persisted-state hydration/migration helpers.
+- `frontend/src/utils/solverPayload.js`: mapping UI shift constraints to solver payload.
+
+### Backend
+
+- `backend/app/main.py`: thin HTTP routes and dependency wiring.
+- `backend/app/services/solver_proxy.py`: outbound solver HTTP calls and error mapping.
+- `backend/app/services/state_store.py`: JSON workspace persistence in SQLite.
+- `backend/app/services/jobs.py`: solve job persistence/query helpers.
+
+### Solver
+
+- `solver/app/main.py`: thin FastAPI entrypoint.
+- `solver/app/models.py`: request schema and feature toggles.
+- `solver/app/engine.py`: CP-SAT model construction, objective, solve diagnostics.
