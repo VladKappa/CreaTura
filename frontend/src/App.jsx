@@ -20,7 +20,8 @@ import {
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const DEFAULT_CONSTRAINTS_CONFIG = {
-  noConsecutiveShiftsEnabled: true,
+  maxWorktimeInRowEnabled: true,
+  maxWorktimeInRowHours: 8,
   restGapEnabled: true,
   restGapHours: 10,
   restGapWeight: 5,
@@ -77,11 +78,17 @@ function clamp(value, min, max, fallback) {
 
 function normalizeConstraintsConfig(rawConfig, legacyBalanceWorkedHours = false) {
   const raw = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  const legacyNoConsecutive = raw.noConsecutiveShiftsEnabled;
   return {
-    noConsecutiveShiftsEnabled:
-      raw.noConsecutiveShiftsEnabled === undefined
-        ? DEFAULT_CONSTRAINTS_CONFIG.noConsecutiveShiftsEnabled
-        : Boolean(raw.noConsecutiveShiftsEnabled),
+    maxWorktimeInRowEnabled:
+      raw.maxWorktimeInRowEnabled === undefined
+        ? legacyNoConsecutive === undefined
+          ? DEFAULT_CONSTRAINTS_CONFIG.maxWorktimeInRowEnabled
+          : Boolean(legacyNoConsecutive)
+        : Boolean(raw.maxWorktimeInRowEnabled),
+    maxWorktimeInRowHours: Math.round(
+      clamp(raw.maxWorktimeInRowHours, 1, 24, DEFAULT_CONSTRAINTS_CONFIG.maxWorktimeInRowHours)
+    ),
     restGapEnabled:
       raw.restGapEnabled === undefined ? DEFAULT_CONSTRAINTS_CONFIG.restGapEnabled : Boolean(raw.restGapEnabled),
     restGapHours: Math.round(
@@ -702,7 +709,8 @@ export default function App() {
         soft,
       },
       feature_toggles: {
-        no_consecutive_shifts_per_employee: constraintsConfig.noConsecutiveShiftsEnabled,
+        max_worktime_in_row_enabled: constraintsConfig.maxWorktimeInRowEnabled,
+        max_worktime_in_row_hours: constraintsConfig.maxWorktimeInRowHours,
         min_rest_after_shift_enabled: constraintsConfig.restGapEnabled,
         min_rest_after_shift_hours: constraintsConfig.restGapHours,
         min_rest_after_shift_weight: constraintsConfig.restGapWeight,

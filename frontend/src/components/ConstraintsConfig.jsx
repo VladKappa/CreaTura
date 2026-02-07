@@ -16,18 +16,36 @@ export default function ConstraintsConfig({ config, onChange }) {
 
       <div className="constraint-config-item">
         <div>
-          <h4>No Consecutive Shifts</h4>
+          <h4>Max Worktime In A Row</h4>
           <p className="subtle">
-            Hard rule. An employee cannot be assigned two consecutive shifts in timeline order.
+            Hard rule. Limits continuous back-to-back assignment time for each employee.
+            Example: with 8h max, two 4h shifts in a row are allowed, two 8h shifts are not.
           </p>
         </div>
         <label className="checkbox dense">
           <input
             type="checkbox"
-            checked={config.noConsecutiveShiftsEnabled}
-            onChange={(e) => setConfig("noConsecutiveShiftsEnabled", e.target.checked)}
+            checked={config.maxWorktimeInRowEnabled}
+            onChange={(e) => setConfig("maxWorktimeInRowEnabled", e.target.checked)}
           />
           Enabled
+        </label>
+        <label>
+          Maximum continuous work (hours)
+          <input
+            type="number"
+            min="1"
+            max="24"
+            step="1"
+            disabled={!config.maxWorktimeInRowEnabled}
+            value={config.maxWorktimeInRowHours}
+            onChange={(e) =>
+              setConfig(
+                "maxWorktimeInRowHours",
+                Math.round(Math.max(1, Math.min(24, toNumber(e.target.value, 8))))
+              )
+            }
+          />
         </label>
       </div>
 
