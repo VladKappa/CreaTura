@@ -59,7 +59,8 @@ class Constraints(BaseModel):
 
 
 class FeatureToggles(BaseModel):
-    no_consecutive_shifts_per_employee: bool = True
+    max_worktime_in_row_enabled: bool = True
+    max_worktime_in_row_hours: int = Field(8, ge=1, le=24)
     min_rest_after_shift_enabled: bool = True
     min_rest_after_shift_hours: int = Field(10, ge=1, le=24)
     min_rest_after_shift_weight: int = Field(5, ge=1, le=100)
@@ -129,7 +130,8 @@ def solve(payload: SolverRequest):
     started_at = time.perf_counter()
     logger.info(
         "[%s] solve start horizon_start=%s days=%d employees=%d shifts=%d hard=%d soft=%d "
-        "no_consecutive=%s min_rest_enabled=%s min_rest_hours=%d min_rest_weight=%d "
+        "max_worktime_enabled=%s max_worktime_hours=%d "
+        "min_rest_enabled=%s min_rest_hours=%d min_rest_weight=%d "
         "balance_worked_hours=%s balance_span_multiplier=%.2f balance_weight=%d",
         request_id,
         payload.horizon.start,
@@ -138,7 +140,8 @@ def solve(payload: SolverRequest):
         len(payload.shifts),
         len(payload.constraints.hard),
         len(payload.constraints.soft),
-        payload.feature_toggles.no_consecutive_shifts_per_employee,
+        payload.feature_toggles.max_worktime_in_row_enabled,
+        payload.feature_toggles.max_worktime_in_row_hours,
         payload.feature_toggles.min_rest_after_shift_enabled,
         payload.feature_toggles.min_rest_after_shift_hours,
         payload.feature_toggles.min_rest_after_shift_weight,
@@ -179,6 +182,11 @@ def solve(payload: SolverRequest):
     num_employees = len(payload.employees)
     num_shifts = len(payload.shifts)
     horizon_start_ord = date.fromisoformat(payload.horizon.start).toordinal()
+    shift_durations = [shift_duration_minutes(shift) for shift in payload.shifts]
+    shift_start_abs = [
+        shift_start_abs_minutes(shift, horizon_start_ord) for shift in payload.shifts
+    ]
+    shift_end_abs = [start + duration for start, duration in zip(shift_start_abs, shift_durations)]
     min_desired_rest_minutes = payload.feature_toggles.min_rest_after_shift_hours * 60
     short_rest_penalty_weight = payload.feature_toggles.min_rest_after_shift_weight
 
@@ -195,18 +203,39 @@ def solve(payload: SolverRequest):
             == shift.required
         )
 
-    # Default hard rule: an employee cannot work two consecutive shifts in timeline order.
-    if payload.feature_toggles.no_consecutive_shifts_per_employee:
+    # Default hard rule: cap continuous worktime across back-to-back shifts.
+    if payload.feature_toggles.max_worktime_in_row_enabled:
+        max_worktime_minutes = payload.feature_toggles.max_worktime_in_row_hours * 60
         sorted_shift_indices = sorted(range(num_shifts), key=lambda idx: shift_order_key(payload.shifts[idx]))
+
+        violating_windows: list[list[int]] = []
+        for start_pos, start_shift_idx in enumerate(sorted_shift_indices):
+            running_minutes = shift_durations[start_shift_idx]
+            window = [start_shift_idx]
+            if running_minutes > max_worktime_minutes:
+                violating_windows.append(window.copy())
+
+            for next_pos in range(start_pos + 1, len(sorted_shift_indices)):
+                prev_shift_idx = sorted_shift_indices[next_pos - 1]
+                next_shift_idx = sorted_shift_indices[next_pos]
+                gap_minutes = shift_start_abs[next_shift_idx] - shift_end_abs[prev_shift_idx]
+                if gap_minutes != 0:
+                    break
+
+                window.append(next_shift_idx)
+                running_minutes += shift_durations[next_shift_idx]
+                if running_minutes > max_worktime_minutes:
+                    violating_windows.append(window.copy())
+
         for employee_idx in range(num_employees):
-            for left_shift_idx, right_shift_idx in zip(sorted_shift_indices, sorted_shift_indices[1:]):
-                model.add(assign[(employee_idx, left_shift_idx)] + assign[(employee_idx, right_shift_idx)] <= 1)
+            for window in violating_windows:
+                model.add(sum(assign[(employee_idx, shift_idx)] for shift_idx in window) <= len(window) - 1)
 
     warnings: list[str] = []
     enabled_feature_toggles: list[str] = []
     applied_default_rules: list[str] = []
-    if payload.feature_toggles.no_consecutive_shifts_per_employee:
-        applied_default_rules.append("no_consecutive_shifts_per_employee")
+    if payload.feature_toggles.max_worktime_in_row_enabled:
+        applied_default_rules.append("max_worktime_in_row")
     if payload.feature_toggles.min_rest_after_shift_enabled:
         applied_default_rules.append("prefer_min_rest_after_shift")
 
@@ -297,20 +326,13 @@ def solve(payload: SolverRequest):
 
     # Default soft rule: prefer minimum rest between any two worked shifts for an employee.
     if payload.feature_toggles.min_rest_after_shift_enabled:
-        shift_windows = [
-            (
-                shift_start_abs_minutes(shift, horizon_start_ord),
-                shift_end_abs_minutes(shift, horizon_start_ord),
-            )
-            for shift in payload.shifts
-        ]
         short_rest_pairs = []
         for left_shift_idx in range(num_shifts):
-            _, left_end = shift_windows[left_shift_idx]
+            left_end = shift_end_abs[left_shift_idx]
             for right_shift_idx in range(num_shifts):
                 if left_shift_idx == right_shift_idx:
                     continue
-                right_start, _ = shift_windows[right_shift_idx]
+                right_start = shift_start_abs[right_shift_idx]
                 rest_minutes = right_start - left_end
                 if 0 <= rest_minutes < min_desired_rest_minutes:
                     short_rest_pairs.append((left_shift_idx, right_shift_idx, rest_minutes))
@@ -328,7 +350,7 @@ def solve(payload: SolverRequest):
                 )
                 left_shift = payload.shifts[left_shift_idx]
                 right_shift = payload.shifts[right_shift_idx]
-                rest_minutes = shift_windows[right_shift_idx][0] - shift_windows[left_shift_idx][1]
+                rest_minutes = shift_start_abs[right_shift_idx] - shift_end_abs[left_shift_idx]
                 objective_term_refs.append(
                     {
                         "var": both_assigned,
@@ -365,7 +387,6 @@ def solve(payload: SolverRequest):
     balance_average_shift_duration_minutes = None
     if payload.feature_toggles.balance_worked_hours:
         enabled_feature_toggles.append("balance_worked_hours")
-        shift_durations = [shift_duration_minutes(shift) for shift in payload.shifts]
         total_shift_minutes = sum(shift_durations)
         max_hours_upper = max(1, (total_shift_minutes + 59) // 60)
 
