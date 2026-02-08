@@ -13,9 +13,6 @@ export function nextShiftId() {
 }
 
 export function defaultShiftName(index) {
-  if (index === 0) return "Morning";
-  if (index === 1) return "Evening";
-  if (index === 2) return "Night";
   return `Shift ${index + 1}`;
 }
 
@@ -56,6 +53,16 @@ export const PREFERENCE_KEYS = Object.keys(PREFERENCE_META);
 export function timeToMinutes(text) {
   const [hours, minutes] = text.split(":").map(Number);
   return hours * 60 + minutes;
+}
+
+export function sortShiftsByStart(shifts) {
+  return [...shifts].sort((left, right) => {
+    const startDiff = timeToMinutes(left.start) - timeToMinutes(right.start);
+    if (startDiff !== 0) return startDiff;
+    const endDiff = timeToMinutes(left.end) - timeToMinutes(right.end);
+    if (endDiff !== 0) return endDiff;
+    return String(left.id || "").localeCompare(String(right.id || ""));
+  });
 }
 
 export function minutesToTime(minutes) {
@@ -156,9 +163,9 @@ export function buildWeekFromToday() {
 
 export function newDefaultShifts() {
   return DAY_LABELS.map(() => [
-    makeShift("07:30", "15:30", "Morning"),
-    makeShift("15:30", "23:30", "Evening"),
-    makeShift("23:30", "07:30", "Night"),
+    makeShift("07:30", "15:30", defaultShiftName(0)),
+    makeShift("15:30", "23:30", defaultShiftName(1)),
+    makeShift("23:30", "07:30", defaultShiftName(2)),
   ]);
 }
 
@@ -225,6 +232,96 @@ export function validateShiftSet(shifts) {
   return { ok: true };
 }
 
+function carryInIntervals(previousDayShifts) {
+  const intervals = [];
+  previousDayShifts.forEach((shift) => {
+    if (!isOvernight(shift)) return;
+    const end = timeToMinutes(shift.end);
+    if (end <= 0) return;
+    intervals.push([0, end]);
+  });
+  return intervals;
+}
+
+function currentDayIntervals(shift) {
+  const start = timeToMinutes(shift.start);
+  const end = timeToMinutes(shift.end);
+  if (end > start) return [[start, end]];
+  if (end < start) {
+    // Pentru o tura overnight din ziua curenta, in ziua curenta conteaza doar
+    // segmentul [start, 24:00). Segmentul [00:00, end) apartine zilei urmatoare.
+    return [[start, MINUTES_IN_DAY]];
+  }
+  return [[0, MINUTES_IN_DAY]];
+}
+
+function carryOutIntervals(shifts) {
+  const intervals = [];
+  shifts.forEach((shift) => {
+    if (!isOvernight(shift)) return;
+    const end = timeToMinutes(shift.end);
+    if (end <= 0) return;
+    intervals.push([0, end]);
+  });
+  return intervals;
+}
+
+export function hasCarryInOverlap(shifts, previousDayShifts = []) {
+  const carryIntervals = carryInIntervals(previousDayShifts);
+  if (carryIntervals.length === 0) return false;
+
+  for (const shift of shifts) {
+    const currentIntervals = currentDayIntervals(shift);
+    for (const current of currentIntervals) {
+      for (const carry of carryIntervals) {
+        if (intervalsOverlap(current, carry)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+export function hasCarryOutOverlap(shifts, nextDayShifts = []) {
+  const carryOut = carryOutIntervals(shifts);
+  if (carryOut.length === 0 || nextDayShifts.length === 0) return false;
+
+  const nextDayIntervals = nextDayShifts.flatMap((shift) => currentDayIntervals(shift));
+  if (nextDayIntervals.length === 0) return false;
+
+  for (const left of carryOut) {
+    for (const right of nextDayIntervals) {
+      if (intervalsOverlap(left, right)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function validateShiftSetWithCarryIn(
+  shifts,
+  previousDayShifts = [],
+  nextDayShifts = []
+) {
+  const baseValidation = validateShiftSet(shifts);
+  if (!baseValidation.ok) return baseValidation;
+  if (hasCarryInOverlap(shifts, previousDayShifts)) {
+    return {
+      ok: false,
+      error: "Shifts cannot overlap with overnight carry-over from the previous day.",
+    };
+  }
+  if (hasCarryOutOverlap(shifts, nextDayShifts)) {
+    return {
+      ok: false,
+      error: "Shifts cannot overlap with the next day schedule.",
+    };
+  }
+  return { ok: true };
+}
+
 function buildOccupiedMinutes(shifts) {
   const occupied = new Array(MINUTES_IN_DAY).fill(false);
   for (const shift of shifts) {
@@ -238,12 +335,58 @@ function buildOccupiedMinutes(shifts) {
   return occupied;
 }
 
+function markCarryInOccupied(occupied, previousDayShifts = []) {
+  previousDayShifts.forEach((shift) => {
+    if (!isOvernight(shift)) return;
+    const end = timeToMinutes(shift.end);
+    for (let minute = 0; minute < end; minute += 1) {
+      occupied[minute] = true;
+    }
+  });
+}
+
 function isFreeWindow(occupied, startMinute, duration) {
   for (let i = 0; i < duration; i += 1) {
     const minute = (startMinute + i) % MINUTES_IN_DAY;
     if (occupied[minute]) return false;
   }
   return true;
+}
+
+function freeWindowLengthFromStart(occupied, startMinute) {
+  if (occupied[startMinute]) return 0;
+  let length = 0;
+  while (length < MINUTES_IN_DAY) {
+    const minute = (startMinute + length) % MINUTES_IN_DAY;
+    if (occupied[minute]) break;
+    length += 1;
+  }
+  return length;
+}
+
+function firstFreeMinute(occupied) {
+  for (let minute = 0; minute < MINUTES_IN_DAY; minute += 1) {
+    if (!occupied[minute]) return minute;
+  }
+  return -1;
+}
+
+function nextDayPrefixFreeMinutes(nextDayShifts = []) {
+  if (!nextDayShifts.length) return MINUTES_IN_DAY;
+  const occupied = new Array(MINUTES_IN_DAY).fill(false);
+  nextDayShifts.forEach((shift) => {
+    const intervals = currentDayIntervals(shift);
+    intervals.forEach(([start, end]) => {
+      for (let minute = start; minute < end; minute += 1) {
+        occupied[minute] = true;
+      }
+    });
+  });
+  let free = 0;
+  while (free < MINUTES_IN_DAY && !occupied[free]) {
+    free += 1;
+  }
+  return free;
 }
 
 function latestShiftAnchor(shifts) {
@@ -269,13 +412,30 @@ function latestShiftAnchor(shifts) {
   };
 }
 
-export function findNextAvailableShift(shifts) {
+export function findNextAvailableShift(shifts, previousDayShifts = [], nextDayShifts = []) {
   const occupied = buildOccupiedMinutes(shifts);
+  markCarryInOccupied(occupied, previousDayShifts);
   const anchor = latestShiftAnchor(shifts);
-  const duration = Math.min(Math.max(anchor.duration, 1), MINUTES_IN_DAY - 1);
+  const searchAnchorStart =
+    shifts.length === 0 ? firstFreeMinute(occupied) : anchor.start;
+  if (searchAnchorStart < 0) return null;
+  const preferredDuration = Math.min(Math.max(anchor.duration, 1), MINUTES_IN_DAY - 1);
+  const nextDayFreePrefix = nextDayPrefixFreeMinutes(nextDayShifts);
 
   for (let offset = 0; offset < MINUTES_IN_DAY; offset += 1) {
-    const candidateStart = (anchor.start + offset) % MINUTES_IN_DAY;
+    const candidateStart = (searchAnchorStart + offset) % MINUTES_IN_DAY;
+    if (occupied[candidateStart]) continue;
+    const freeLength = freeWindowLengthFromStart(occupied, candidateStart);
+    if (freeLength <= 0) continue;
+    const untilMidnight = MINUTES_IN_DAY - candidateStart;
+    const maxDurationByNextDay = untilMidnight + nextDayFreePrefix;
+    const duration = Math.min(
+      preferredDuration,
+      freeLength,
+      maxDurationByNextDay,
+      MINUTES_IN_DAY - 1
+    );
+    if (duration <= 0) continue;
     if (!isFreeWindow(occupied, candidateStart, duration)) continue;
     const candidateEnd = (candidateStart + duration) % MINUTES_IN_DAY;
     const name = defaultShiftName(shifts.length);

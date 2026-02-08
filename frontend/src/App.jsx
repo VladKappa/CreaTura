@@ -45,7 +45,8 @@ import {
   makeEmployee,
   normalizeShiftConstraints,
   PREFERENCE_KEYS,
-  validateShiftSet,
+  sortShiftsByStart,
+  validateShiftSetWithCarryIn,
 } from "./utils/schedule";
 import {
   buildInitialEmployees,
@@ -316,7 +317,7 @@ export default function App() {
 
   function setDefaultDayShifts(day, nextShifts) {
     if (!selectedEmployee) return;
-    const normalized = nextShifts.map(normalizeShiftConstraints);
+    const normalized = sortShiftsByStart(nextShifts.map(normalizeShiftConstraints));
     updateEmployee(selectedEmployee.id, (employee) => ({
       ...employee,
       defaultShiftsByDay: employee.defaultShiftsByDay.map((shifts, idx) =>
@@ -327,7 +328,7 @@ export default function App() {
 
   function setOverrideDayShifts(day, nextShifts) {
     if (!selectedEmployee) return;
-    const normalized = nextShifts.map(normalizeShiftConstraints);
+    const normalized = sortShiftsByStart(nextShifts.map(normalizeShiftConstraints));
     updateEmployee(selectedEmployee.id, (employee) => ({
       ...employee,
       overrides: {
@@ -345,10 +346,46 @@ export default function App() {
     return overrideErrors[day.iso] || "";
   }
 
+  function getPreviousWeekDay(day) {
+    if (!day || day.dayIndex <= 0) return null;
+    return week[day.dayIndex - 1] || null;
+  }
+
+  function getNextWeekDay(day) {
+    if (!day || day.dayIndex >= week.length - 1) return null;
+    return week[day.dayIndex + 1] || null;
+  }
+
+  function getPreviousDefaultDayShifts(day) {
+    if (!selectedEmployee || day.dayIndex <= 0) return [];
+    return selectedEmployee.defaultShiftsByDay[day.dayIndex - 1] || [];
+  }
+
+  function getNextDefaultDayShifts(day) {
+    if (!selectedEmployee || day.dayIndex >= week.length - 1) return [];
+    return selectedEmployee.defaultShiftsByDay[day.dayIndex + 1] || [];
+  }
+
+  function getPreviousEffectiveDayShifts(day) {
+    if (!selectedEmployee) return [];
+    const previousDay = getPreviousWeekDay(day);
+    if (!previousDay) return [];
+    return getDayShifts(selectedEmployee, previousDay);
+  }
+
+  function getNextEffectiveDayShifts(day) {
+    if (!selectedEmployee) return [];
+    const nextDay = getNextWeekDay(day);
+    if (!nextDay) return [];
+    return getDayShifts(selectedEmployee, nextDay);
+  }
+
   function addDefaultShift(day) {
     if (!selectedEmployee) return;
     const current = selectedEmployee.defaultShiftsByDay[day.dayIndex];
-    const nextShift = findNextAvailableShift(current);
+    const previousShifts = getPreviousDefaultDayShifts(day);
+    const nextShifts = getNextDefaultDayShifts(day);
+    const nextShift = findNextAvailableShift(current, previousShifts, nextShifts);
     if (!nextShift) {
       setErrorKey(
         setDefaultErrors,
@@ -359,7 +396,7 @@ export default function App() {
     }
 
     const next = [...current, nextShift];
-    const validation = validateShiftSet(next);
+    const validation = validateShiftSetWithCarryIn(next, previousShifts, nextShifts);
     if (!validation.ok) {
       setErrorKey(setDefaultErrors, day.dayIndex, validation.error);
       return;
@@ -372,8 +409,10 @@ export default function App() {
   function updateDefaultShift(day, shiftId, patch) {
     if (!selectedEmployee) return;
     const current = selectedEmployee.defaultShiftsByDay[day.dayIndex];
+    const previousShifts = getPreviousDefaultDayShifts(day);
+    const nextShifts = getNextDefaultDayShifts(day);
     const next = current.map((shift) => (shift.id === shiftId ? { ...shift, ...patch } : shift));
-    const validation = validateShiftSet(next);
+    const validation = validateShiftSetWithCarryIn(next, previousShifts, nextShifts);
     if (!validation.ok) {
       setErrorKey(setDefaultErrors, day.dayIndex, validation.error);
       return;
@@ -419,8 +458,10 @@ export default function App() {
 
   function pasteDefaultDay(day) {
     if (!selectedEmployee || !shiftClipboard) return;
+    const previousShifts = getPreviousDefaultDayShifts(day);
+    const nextShifts = getNextDefaultDayShifts(day);
     const pasted = cloneShifts(shiftClipboard.shifts);
-    const validation = validateShiftSet(pasted);
+    const validation = validateShiftSetWithCarryIn(pasted, previousShifts, nextShifts);
     if (!validation.ok) {
       setErrorKey(setDefaultErrors, day.dayIndex, validation.error);
       return;
@@ -443,8 +484,10 @@ export default function App() {
 
   function pasteToWeekOverride(day) {
     if (!selectedEmployee || !shiftClipboard) return;
+    const previousShifts = getPreviousEffectiveDayShifts(day);
+    const nextShifts = getNextEffectiveDayShifts(day);
     const pasted = cloneShifts(shiftClipboard.shifts);
-    const validation = validateShiftSet(pasted);
+    const validation = validateShiftSetWithCarryIn(pasted, previousShifts, nextShifts);
     if (!validation.ok) {
       setErrorKey(setOverrideErrors, day.iso, validation.error);
       return;
@@ -522,8 +565,10 @@ export default function App() {
     if (!selectedEmployee) return;
     const current = selectedEmployee.overrides[day.iso];
     if (!current) return;
+    const previousShifts = getPreviousEffectiveDayShifts(day);
+    const nextShifts = getNextEffectiveDayShifts(day);
 
-    const nextShift = findNextAvailableShift(current);
+    const nextShift = findNextAvailableShift(current, previousShifts, nextShifts);
     if (!nextShift) {
       setErrorKey(
         setOverrideErrors,
@@ -534,7 +579,7 @@ export default function App() {
     }
 
     const next = [...current, nextShift];
-    const validation = validateShiftSet(next);
+    const validation = validateShiftSetWithCarryIn(next, previousShifts, nextShifts);
     if (!validation.ok) {
       setErrorKey(setOverrideErrors, day.iso, validation.error);
       return;
@@ -548,9 +593,11 @@ export default function App() {
     if (!selectedEmployee) return;
     const current = selectedEmployee.overrides[day.iso];
     if (!current) return;
+    const previousShifts = getPreviousEffectiveDayShifts(day);
+    const nextShifts = getNextEffectiveDayShifts(day);
 
     const next = current.map((shift) => (shift.id === shiftId ? { ...shift, ...patch } : shift));
-    const validation = validateShiftSet(next);
+    const validation = validateShiftSetWithCarryIn(next, previousShifts, nextShifts);
     if (!validation.ok) {
       setErrorKey(setOverrideErrors, day.iso, validation.error);
       return;
