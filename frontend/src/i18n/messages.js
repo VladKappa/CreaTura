@@ -71,11 +71,15 @@ const MESSAGES = {
     "constraints.maxWorktimeDesc":
       "Hard rule. Limits continuous back-to-back assignment time for each employee. Applies to shift chains (not a single shift): with 8h max, two 4h shifts in a row are allowed, two 8h shifts are not.",
     "constraints.maxWorktimeInput": "Maximum continuous work (hours)",
-    "constraints.restGapTitle": "Minimum Rest Gap After Configured Max Worktime In A Row",
-    "constraints.restGapDesc":
+    "constraints.restGapHardTitle": "Minimum Rest Gap After Configured Max Worktime In A Row (Hard)",
+    "constraints.restGapHardDesc":
+      "Hard rule. Enforces minimum rest after reaching the max-worktime-in-a-row chain.",
+    "constraints.restGapHardHours": "Minimum hard rest (hours)",
+    "constraints.restGapSoftTitle": "Minimum Rest Gap After Configured Max Worktime In A Row (Soft)",
+    "constraints.restGapSoftDesc":
       "Soft rule. Penalizes assignments where rest after a shift chain is below the configured hours once the max worktime-in-a-row chain is reached.",
-    "constraints.restGapHours": "Minimum rest (hours)",
-    "constraints.restGapWeight": "Penalty weight",
+    "constraints.restGapSoftHours": "Minimum preferred rest (hours)",
+    "constraints.restGapSoftWeight": "Penalty weight",
     "constraints.balanceTitle": "Balance Worked Hours",
     "constraints.balanceDesc":
       "Soft rule. Penalizes imbalance above allowed span derived from avg shift duration.",
@@ -200,11 +204,15 @@ const MESSAGES = {
     "constraints.maxWorktimeDesc":
       "Regula hard. Limiteaza timpul de lucru continuu pe ture consecutive. Se aplica lanturilor de ture (nu unei ture singulare): la 8h, doua ture de 4h sunt permise, doua ture de 8h nu.",
     "constraints.maxWorktimeInput": "Timp maxim continuu (ore)",
-    "constraints.restGapTitle": "Pauza minima dupa pragul de timp maxim consecutiv",
-    "constraints.restGapDesc":
+    "constraints.restGapHardTitle": "Pauza minima dupa pragul de timp maxim consecutiv (Hard)",
+    "constraints.restGapHardDesc":
+      "Regula hard. Obliga pauza minima dupa atingerea pragului de timp maxim lucrat consecutiv.",
+    "constraints.restGapHardHours": "Pauza minima hard (ore)",
+    "constraints.restGapSoftTitle": "Pauza minima dupa pragul de timp maxim consecutiv (Soft)",
+    "constraints.restGapSoftDesc":
       "Regula soft. Penalizeaza situatiile in care pauza dupa un lant care a atins pragul maxim este sub valoarea configurata.",
-    "constraints.restGapHours": "Pauza minima (ore)",
-    "constraints.restGapWeight": "Pondere penalizare",
+    "constraints.restGapSoftHours": "Pauza minima preferata (ore)",
+    "constraints.restGapSoftWeight": "Pondere penalizare",
     "constraints.balanceTitle": "Echilibrare ore lucrate",
     "constraints.balanceDesc":
       "Regula soft. Penalizeaza dezechilibrul peste intervalul permis derivat din durata medie a turei.",

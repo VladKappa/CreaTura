@@ -49,9 +49,11 @@ class Constraints(BaseModel):
 class FeatureToggles(BaseModel):
     max_worktime_in_row_enabled: bool = True
     max_worktime_in_row_hours: int = Field(8, ge=1, le=24)
-    min_rest_after_shift_enabled: bool = True
-    min_rest_after_shift_hours: int = Field(10, ge=1, le=24)
-    min_rest_after_shift_weight: int = Field(5, ge=1, le=100)
+    min_rest_after_shift_hard_enabled: bool = True
+    min_rest_after_shift_hard_hours: int = Field(10, ge=1, le=24)
+    min_rest_after_shift_soft_enabled: bool = True
+    min_rest_after_shift_soft_hours: int = Field(10, ge=1, le=24)
+    min_rest_after_shift_soft_weight: int = Field(5, ge=1, le=100)
     balance_worked_hours: bool = False
     balance_worked_hours_weight: int = Field(2, ge=1, le=100)
     balance_worked_hours_max_span_multiplier: float = Field(1.5, ge=0.1, le=10.0)

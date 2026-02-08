@@ -77,9 +77,11 @@ export function buildSolvePayload({ selectedEmployee, week, employees, constrain
     feature_toggles: {
       max_worktime_in_row_enabled: constraintsConfig.maxWorktimeInRowEnabled,
       max_worktime_in_row_hours: constraintsConfig.maxWorktimeInRowHours,
-      min_rest_after_shift_enabled: constraintsConfig.restGapEnabled,
-      min_rest_after_shift_hours: constraintsConfig.restGapHours,
-      min_rest_after_shift_weight: constraintsConfig.restGapWeight,
+      min_rest_after_shift_hard_enabled: constraintsConfig.restGapHardEnabled,
+      min_rest_after_shift_hard_hours: constraintsConfig.restGapHardHours,
+      min_rest_after_shift_soft_enabled: constraintsConfig.restGapSoftEnabled,
+      min_rest_after_shift_soft_hours: constraintsConfig.restGapSoftHours,
+      min_rest_after_shift_soft_weight: constraintsConfig.restGapSoftWeight,
       balance_worked_hours: constraintsConfig.balanceWorkedHoursEnabled,
       balance_worked_hours_weight: constraintsConfig.balanceWorkedHoursWeight,
       balance_worked_hours_max_span_multiplier:

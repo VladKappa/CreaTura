@@ -76,19 +76,52 @@ export default function ConstraintsConfig({ t, config, onChange }) {
 
       <ConfigSection
         title={t(
-          "constraints.restGapTitle",
+          "constraints.restGapHardTitle",
           {},
-          "Minimum Rest Gap After Configured Max Worktime In A Row"
+          "Minimum Rest Gap After Configured Max Worktime In A Row (Hard)"
         )}
         description={t(
-          "constraints.restGapDesc",
+          "constraints.restGapHardDesc",
+          {},
+          "Hard rule. Enforces minimum rest after reaching the max-worktime-in-a-row chain."
+        )}
+      >
+        <EnabledSwitch
+          checked={config.restGapHardEnabled}
+          onChange={(value) => setConfig("restGapHardEnabled", value)}
+          label={t("common.enabled", {}, "Enabled")}
+        />
+        <TextField
+          type="number"
+          label={t("constraints.restGapHardHours", {}, "Minimum hard rest (hours)")}
+          inputProps={{ min: 1, max: 24, step: 1 }}
+          disabled={!config.restGapHardEnabled}
+          value={config.restGapHardHours}
+          size="small"
+          onChange={(e) =>
+            setConfig(
+              "restGapHardHours",
+              Math.round(Math.max(1, Math.min(24, toNumber(e.target.value, 10))))
+            )
+          }
+        />
+      </ConfigSection>
+
+      <ConfigSection
+        title={t(
+          "constraints.restGapSoftTitle",
+          {},
+          "Minimum Rest Gap After Configured Max Worktime In A Row (Soft)"
+        )}
+        description={t(
+          "constraints.restGapSoftDesc",
           {},
           "Soft rule. Penalizes assignments where rest after a shift chain is below the configured hours."
         )}
       >
         <EnabledSwitch
-          checked={config.restGapEnabled}
-          onChange={(value) => setConfig("restGapEnabled", value)}
+          checked={config.restGapSoftEnabled}
+          onChange={(value) => setConfig("restGapSoftEnabled", value)}
           label={t("common.enabled", {}, "Enabled")}
         />
         <Box
@@ -100,28 +133,28 @@ export default function ConstraintsConfig({ t, config, onChange }) {
         >
           <TextField
             type="number"
-            label={t("constraints.restGapHours", {}, "Minimum rest (hours)")}
+            label={t("constraints.restGapSoftHours", {}, "Minimum preferred rest (hours)")}
             inputProps={{ min: 1, max: 24, step: 1 }}
-            disabled={!config.restGapEnabled}
-            value={config.restGapHours}
+            disabled={!config.restGapSoftEnabled}
+            value={config.restGapSoftHours}
             size="small"
             onChange={(e) =>
               setConfig(
-                "restGapHours",
+                "restGapSoftHours",
                 Math.round(Math.max(1, Math.min(24, toNumber(e.target.value, 10))))
               )
             }
           />
           <TextField
             type="number"
-            label={t("constraints.restGapWeight", {}, "Penalty weight")}
+            label={t("constraints.restGapSoftWeight", {}, "Penalty weight")}
             inputProps={{ min: 1, max: 100, step: 1 }}
-            disabled={!config.restGapEnabled}
-            value={config.restGapWeight}
+            disabled={!config.restGapSoftEnabled}
+            value={config.restGapSoftWeight}
             size="small"
             onChange={(e) =>
               setConfig(
-                "restGapWeight",
+                "restGapSoftWeight",
                 Math.round(Math.max(1, Math.min(100, toNumber(e.target.value, 5))))
               )
             }

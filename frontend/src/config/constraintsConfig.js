@@ -1,9 +1,11 @@
 const DEFAULT_CONSTRAINTS_CONFIG = {
   maxWorktimeInRowEnabled: true,
   maxWorktimeInRowHours: 8,
-  restGapEnabled: true,
-  restGapHours: 10,
-  restGapWeight: 5,
+  restGapHardEnabled: true,
+  restGapHardHours: 10,
+  restGapSoftEnabled: true,
+  restGapSoftHours: 10,
+  restGapSoftWeight: 5,
   preferredWeight: 3,
   unpreferredWeight: 4,
   balanceWorkedHoursEnabled: false,
@@ -17,26 +19,32 @@ function clamp(value, min, max, fallback) {
   return Math.max(min, Math.min(max, parsed));
 }
 
-export function normalizeConstraintsConfig(rawConfig, legacyBalanceWorkedHours = false) {
+export function normalizeConstraintsConfig(rawConfig) {
   const raw = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
-  const legacyNoConsecutive = raw.noConsecutiveShiftsEnabled;
   return {
     maxWorktimeInRowEnabled:
       raw.maxWorktimeInRowEnabled === undefined
-        ? legacyNoConsecutive === undefined
-          ? DEFAULT_CONSTRAINTS_CONFIG.maxWorktimeInRowEnabled
-          : Boolean(legacyNoConsecutive)
+        ? DEFAULT_CONSTRAINTS_CONFIG.maxWorktimeInRowEnabled
         : Boolean(raw.maxWorktimeInRowEnabled),
     maxWorktimeInRowHours: Math.round(
       clamp(raw.maxWorktimeInRowHours, 1, 24, DEFAULT_CONSTRAINTS_CONFIG.maxWorktimeInRowHours)
     ),
-    restGapEnabled:
-      raw.restGapEnabled === undefined ? DEFAULT_CONSTRAINTS_CONFIG.restGapEnabled : Boolean(raw.restGapEnabled),
-    restGapHours: Math.round(
-      clamp(raw.restGapHours, 1, 24, DEFAULT_CONSTRAINTS_CONFIG.restGapHours)
+    restGapHardEnabled:
+      raw.restGapHardEnabled === undefined
+        ? DEFAULT_CONSTRAINTS_CONFIG.restGapHardEnabled
+        : Boolean(raw.restGapHardEnabled),
+    restGapHardHours: Math.round(
+      clamp(raw.restGapHardHours, 1, 24, DEFAULT_CONSTRAINTS_CONFIG.restGapHardHours)
     ),
-    restGapWeight: Math.round(
-      clamp(raw.restGapWeight, 1, 100, DEFAULT_CONSTRAINTS_CONFIG.restGapWeight)
+    restGapSoftEnabled:
+      raw.restGapSoftEnabled === undefined
+        ? DEFAULT_CONSTRAINTS_CONFIG.restGapSoftEnabled
+        : Boolean(raw.restGapSoftEnabled),
+    restGapSoftHours: Math.round(
+      clamp(raw.restGapSoftHours, 1, 24, DEFAULT_CONSTRAINTS_CONFIG.restGapSoftHours)
+    ),
+    restGapSoftWeight: Math.round(
+      clamp(raw.restGapSoftWeight, 1, 100, DEFAULT_CONSTRAINTS_CONFIG.restGapSoftWeight)
     ),
     preferredWeight: Math.round(
       clamp(raw.preferredWeight, 1, 100, DEFAULT_CONSTRAINTS_CONFIG.preferredWeight)
@@ -46,7 +54,7 @@ export function normalizeConstraintsConfig(rawConfig, legacyBalanceWorkedHours =
     ),
     balanceWorkedHoursEnabled:
       raw.balanceWorkedHoursEnabled === undefined
-        ? Boolean(legacyBalanceWorkedHours)
+        ? DEFAULT_CONSTRAINTS_CONFIG.balanceWorkedHoursEnabled
         : Boolean(raw.balanceWorkedHoursEnabled),
     balanceWorkedHoursWeight: Math.round(
       clamp(raw.balanceWorkedHoursWeight, 1, 100, DEFAULT_CONSTRAINTS_CONFIG.balanceWorkedHoursWeight)

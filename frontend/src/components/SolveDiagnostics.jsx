@@ -27,10 +27,7 @@ function describeUnsatisfied(item) {
   if (item.constraint_type === "avoid_assignment") {
     return `${employee}: avoid assignment was violated on ${formatShift(item.shift)} (-${item.weight}).`;
   }
-  if (
-    item.constraint_type === "min_rest_after_shift" ||
-    item.constraint_type === "min_rest_10h_after_shift"
-  ) {
+  if (item.constraint_type === "min_rest_after_shift") {
     return `${employee}: rest gap ${formatHours(item.rest_minutes)}h after ${formatShift(
       item.left_shift
     )} before ${formatShift(item.right_shift)} (required ${formatHours(

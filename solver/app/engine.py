@@ -164,6 +164,79 @@ def infer_infeasibility_reasons(
                         f"{employee.name} is hard-required on {required_count} shifts inside max-worktime window [{window_preview}], exceeding allowed {len(window) - 1}."
                     )
 
+    # Motivatie:
+    # Cand regula de repaus hard este activa, vrem un indiciu explicit daca
+    # infezabilitatea vine din "require" care forteaza un lant + o tura urmatoare
+    # cu pauza mai mica decat minimul configurat.
+    min_rest_hard_enabled = payload.feature_toggles.min_rest_after_shift_hard_enabled
+    if min_rest_hard_enabled:
+        min_rest_hard_hours = payload.feature_toggles.min_rest_after_shift_hard_hours
+        min_rest_hard_minutes = min_rest_hard_hours * 60
+        max_chain_for_rest_minutes = payload.feature_toggles.max_worktime_in_row_hours * 60
+        horizon_start_ord = date.fromisoformat(payload.horizon.start).toordinal()
+        shift_durations = [shift_duration_minutes(shift) for shift in payload.shifts]
+        shift_start_abs = [
+            shift_start_abs_minutes(shift, horizon_start_ord) for shift in payload.shifts
+        ]
+        shift_end_abs = [start + duration for start, duration in zip(shift_start_abs, shift_durations)]
+        sorted_shift_indices = sorted(
+            range(len(payload.shifts)),
+            key=lambda idx: shift_order_key(payload.shifts[idx]),
+        )
+
+        qualifying_chains_by_left: dict[int, list[list[int]]] = defaultdict(list)
+        for end_pos, end_shift_idx in enumerate(sorted_shift_indices):
+            running_minutes = shift_durations[end_shift_idx]
+            chain = [end_shift_idx]
+            if running_minutes >= max_chain_for_rest_minutes:
+                qualifying_chains_by_left[end_shift_idx].append(chain.copy())
+
+            for prev_pos in range(end_pos - 1, -1, -1):
+                prev_shift_idx = sorted_shift_indices[prev_pos]
+                next_shift_idx = sorted_shift_indices[prev_pos + 1]
+                gap_minutes = shift_start_abs[next_shift_idx] - shift_end_abs[prev_shift_idx]
+                if gap_minutes != 0:
+                    break
+                chain.insert(0, prev_shift_idx)
+                running_minutes += shift_durations[prev_shift_idx]
+                if running_minutes >= max_chain_for_rest_minutes:
+                    qualifying_chains_by_left[end_shift_idx].append(chain.copy())
+
+        short_rest_by_left: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        for left_shift_idx in range(len(payload.shifts)):
+            left_end = shift_end_abs[left_shift_idx]
+            for right_shift_idx in range(len(payload.shifts)):
+                if left_shift_idx == right_shift_idx:
+                    continue
+                rest_minutes = shift_start_abs[right_shift_idx] - left_end
+                if 0 <= rest_minutes < min_rest_hard_minutes:
+                    short_rest_by_left[left_shift_idx].append((right_shift_idx, rest_minutes))
+
+        for employee in payload.employees:
+            required_shift_ids = hard_require_by_employee.get(employee.id, set())
+            if not required_shift_ids:
+                continue
+
+            for left_shift_idx, chains in qualifying_chains_by_left.items():
+                short_rest_targets = short_rest_by_left.get(left_shift_idx, [])
+                if not short_rest_targets:
+                    continue
+                forced_chain = any(
+                    all(shift_idx in required_shift_ids for shift_idx in chain)
+                    for chain in chains
+                )
+                if not forced_chain:
+                    continue
+
+                for right_shift_idx, rest_minutes in short_rest_targets:
+                    if right_shift_idx not in required_shift_ids:
+                        continue
+                    left_shift = payload.shifts[left_shift_idx]
+                    right_shift = payload.shifts[right_shift_idx]
+                    reasons.append(
+                        f"{employee.name} is hard-required on {shift_label(left_shift)} and {shift_label(right_shift)} with only {rest_minutes / 60:.1f}h rest (< {min_rest_hard_hours}h hard minimum)."
+                    )
+
     unique_reasons: list[str] = []
     seen = set()
     for reason in reasons:
@@ -181,10 +254,17 @@ def infer_infeasibility_reasons(
 
 
 def solve_schedule_request(payload: SolverRequest, logger, request_id: str, started_at: float) -> dict:
+    min_rest_hard_enabled = payload.feature_toggles.min_rest_after_shift_hard_enabled
+    min_rest_hard_hours = payload.feature_toggles.min_rest_after_shift_hard_hours
+    min_rest_soft_enabled = payload.feature_toggles.min_rest_after_shift_soft_enabled
+    min_rest_soft_hours = payload.feature_toggles.min_rest_after_shift_soft_hours
+    min_rest_soft_weight = payload.feature_toggles.min_rest_after_shift_soft_weight
+
     logger.info(
         "[%s] solve start horizon_start=%s days=%d employees=%d shifts=%d hard=%d soft=%d "
         "max_worktime_enabled=%s max_worktime_hours=%d "
-        "min_rest_enabled=%s min_rest_hours=%d min_rest_weight=%d "
+        "min_rest_hard_enabled=%s min_rest_hard_hours=%d "
+        "min_rest_soft_enabled=%s min_rest_soft_hours=%d min_rest_soft_weight=%d "
         "balance_worked_hours=%s balance_span_multiplier=%.2f balance_weight=%d",
         request_id,
         payload.horizon.start,
@@ -195,9 +275,11 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
         len(payload.constraints.soft),
         payload.feature_toggles.max_worktime_in_row_enabled,
         payload.feature_toggles.max_worktime_in_row_hours,
-        payload.feature_toggles.min_rest_after_shift_enabled,
-        payload.feature_toggles.min_rest_after_shift_hours,
-        payload.feature_toggles.min_rest_after_shift_weight,
+        min_rest_hard_enabled,
+        min_rest_hard_hours,
+        min_rest_soft_enabled,
+        min_rest_soft_hours,
+        min_rest_soft_weight,
         payload.feature_toggles.balance_worked_hours,
         payload.feature_toggles.balance_worked_hours_max_span_multiplier,
         payload.feature_toggles.balance_worked_hours_weight,
@@ -240,8 +322,9 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
         shift_start_abs_minutes(shift, horizon_start_ord) for shift in payload.shifts
     ]
     shift_end_abs = [start + duration for start, duration in zip(shift_start_abs, shift_durations)]
-    min_desired_rest_minutes = payload.feature_toggles.min_rest_after_shift_hours * 60
-    short_rest_penalty_weight = payload.feature_toggles.min_rest_after_shift_weight
+    min_hard_rest_minutes = min_rest_hard_hours * 60
+    min_soft_rest_minutes = min_rest_soft_hours * 60
+    short_rest_penalty_weight = min_rest_soft_weight
 
     model = cp_model.CpModel()
     assign: dict[tuple[int, int], cp_model.IntVar] = {}
@@ -285,7 +368,9 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
     applied_default_rules: list[str] = []
     if payload.feature_toggles.max_worktime_in_row_enabled:
         applied_default_rules.append("max_worktime_in_row")
-    if payload.feature_toggles.min_rest_after_shift_enabled:
+    if min_rest_hard_enabled:
+        applied_default_rules.append("enforce_min_rest_after_max_worktime")
+    if min_rest_soft_enabled:
         applied_default_rules.append("prefer_min_rest_after_max_worktime")
 
     for hard in payload.constraints.hard:
@@ -372,16 +457,17 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
                 )
 
     # Motivatie:
-    # Pauza minima este modelata ca soft-constraint si se aplica doar dupa ce
-    # angajatul a ajuns la pragul configurat de "max worktime in a row" pe lantul curent.
-    # Astfel, evitam penalizarea pauzelor mici dupa ture scurte care nu au atins
-    # pragul de lucru continuu.
-    if payload.feature_toggles.min_rest_after_shift_enabled:
+    # Regulile de "minimum rest gap" se aplica doar dupa ce un angajat a atins
+    # pragul de "max worktime in a row" pe lantul curent de ture consecutive.
+    # Avem doua variante:
+    # - hard: combinatia devine interzisa;
+    # - soft: combinatia e permisa, dar penalizata in obiectiv.
+    if min_rest_hard_enabled or min_rest_soft_enabled:
         max_chain_for_rest_minutes = payload.feature_toggles.max_worktime_in_row_hours * 60
         sorted_shift_indices = sorted(range(num_shifts), key=lambda idx: shift_order_key(payload.shifts[idx]))
 
-        # Pentru fiecare tura "left", retinem toate lanturile consecutive (gap=0)
-        # care se termina in acea tura si au durata cumulata >= prag.
+        # Pentru fiecare tura "left", retinem lanturile consecutive (gap=0)
+        # care se termina in acea tura si ating pragul de lucru continuu.
         qualifying_chains_by_left: dict[int, list[list[int]]] = defaultdict(list)
         for end_pos, end_shift_idx in enumerate(sorted_shift_indices):
             running_minutes = shift_durations[end_shift_idx]
@@ -401,7 +487,8 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
                 if running_minutes >= max_chain_for_rest_minutes:
                     qualifying_chains_by_left[end_shift_idx].append(chain.copy())
 
-        short_rest_pairs = []
+        hard_short_rest_pairs = []
+        soft_short_rest_pairs = []
         for left_shift_idx in range(num_shifts):
             left_end = shift_end_abs[left_shift_idx]
             for right_shift_idx in range(num_shifts):
@@ -409,8 +496,12 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
                     continue
                 right_start = shift_start_abs[right_shift_idx]
                 rest_minutes = right_start - left_end
-                if 0 <= rest_minutes < min_desired_rest_minutes:
-                    short_rest_pairs.append((left_shift_idx, right_shift_idx, rest_minutes))
+                if rest_minutes < 0:
+                    continue
+                if min_rest_hard_enabled and rest_minutes < min_hard_rest_minutes:
+                    hard_short_rest_pairs.append((left_shift_idx, right_shift_idx, rest_minutes))
+                if min_rest_soft_enabled and rest_minutes < min_soft_rest_minutes:
+                    soft_short_rest_pairs.append((left_shift_idx, right_shift_idx, rest_minutes))
 
         for employee_idx in range(num_employees):
             reached_max_chain_by_left: dict[int, cp_model.IntVar] = {}
@@ -441,7 +532,16 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
                 model.add(reached_max_chain <= sum(chain_full_vars))
                 reached_max_chain_by_left[left_shift_idx] = reached_max_chain
 
-            for left_shift_idx, right_shift_idx, _ in short_rest_pairs:
+            # Hard minimum rest: daca lantul a atins pragul, urmatoarea tura
+            # cu pauza insuficienta devine interzisa.
+            for left_shift_idx, right_shift_idx, _ in hard_short_rest_pairs:
+                reached_max_chain = reached_max_chain_by_left.get(left_shift_idx)
+                if reached_max_chain is None:
+                    continue
+                model.add(reached_max_chain + assign[(employee_idx, right_shift_idx)] <= 1)
+
+            # Soft minimum rest: pastram aceeasi logica, dar cu penalizare.
+            for left_shift_idx, right_shift_idx, rest_minutes in soft_short_rest_pairs:
                 reached_max_chain = reached_max_chain_by_left.get(left_shift_idx)
                 if reached_max_chain is None:
                     continue
@@ -458,7 +558,6 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
 
                 left_shift = payload.shifts[left_shift_idx]
                 right_shift = payload.shifts[right_shift_idx]
-                rest_minutes = shift_start_abs[right_shift_idx] - shift_end_abs[left_shift_idx]
                 objective_term_refs.append(
                     {
                         "var": short_rest_after_max_chain,
@@ -469,7 +568,7 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
                         "employee_name": payload.employees[employee_idx].name,
                         "weight": short_rest_penalty_weight,
                         "rest_minutes": rest_minutes,
-                        "required_rest_minutes": min_desired_rest_minutes,
+                        "required_rest_minutes": min_soft_rest_minutes,
                         "left_shift": {
                             "day": left_shift.day,
                             "date": left_shift.date,
