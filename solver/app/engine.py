@@ -57,6 +57,45 @@ def shift_label(shift: Shift) -> str:
     return f"{shift.day} {shift.date} {shift.type} ({shift.start}-{shift.end})"
 
 
+def build_minimal_qualifying_chain_by_left(
+    sorted_shift_indices: list[int],
+    shift_start_abs: list[int],
+    shift_end_abs: list[int],
+    shift_durations: list[int],
+    max_chain_minutes: int,
+) -> dict[int, list[int]]:
+    """
+    Returneaza pentru fiecare shift \"left\" (capat de lant) cel mai scurt lant
+    consecutiv (gap == 0) care atinge/depaseste pragul de worktime.
+
+    De ce e suficient lantul minim:
+    - orice lant mai lung care atinge pragul include acest lant minim;
+    - daca lantul minim nu este complet atribuit, niciun lant mai lung nu poate fi complet.
+    """
+    minimal_chain_by_left: dict[int, list[int]] = {}
+    for end_pos, end_shift_idx in enumerate(sorted_shift_indices):
+        running_minutes = shift_durations[end_shift_idx]
+        chain = [end_shift_idx]
+        if running_minutes >= max_chain_minutes:
+            minimal_chain_by_left[end_shift_idx] = chain.copy()
+            continue
+
+        for prev_pos in range(end_pos - 1, -1, -1):
+            prev_shift_idx = sorted_shift_indices[prev_pos]
+            next_shift_idx = sorted_shift_indices[prev_pos + 1]
+            gap_minutes = shift_start_abs[next_shift_idx] - shift_end_abs[prev_shift_idx]
+            if gap_minutes != 0:
+                break
+
+            chain.insert(0, prev_shift_idx)
+            running_minutes += shift_durations[prev_shift_idx]
+            if running_minutes >= max_chain_minutes:
+                minimal_chain_by_left[end_shift_idx] = chain.copy()
+                break
+
+    return minimal_chain_by_left
+
+
 def compute_max_worktime_violating_windows(
     payload: SolverRequest,
     shift_start_abs: list[int],
@@ -83,6 +122,9 @@ def compute_max_worktime_violating_windows(
             running_minutes += shift_durations[next_shift_idx]
             if len(window) >= 2 and running_minutes > max_worktime_minutes:
                 violating_windows.append(window.copy())
+                # Primul \"prefix\" care depaseste pragul este suficient pentru
+                # acel start; orice fereastra mai lunga il contine si devine redundant.
+                break
 
     # Dedupe ferestre duplicate rezultate din scanari diferite.
     unique_windows: list[list[int]] = []
@@ -225,23 +267,13 @@ def infer_infeasibility_reasons(
             key=lambda idx: shift_order_key(payload.shifts[idx]),
         )
 
-        qualifying_chains_by_left: dict[int, list[list[int]]] = defaultdict(list)
-        for end_pos, end_shift_idx in enumerate(sorted_shift_indices):
-            running_minutes = shift_durations[end_shift_idx]
-            chain = [end_shift_idx]
-            if running_minutes >= max_chain_for_rest_minutes:
-                qualifying_chains_by_left[end_shift_idx].append(chain.copy())
-
-            for prev_pos in range(end_pos - 1, -1, -1):
-                prev_shift_idx = sorted_shift_indices[prev_pos]
-                next_shift_idx = sorted_shift_indices[prev_pos + 1]
-                gap_minutes = shift_start_abs[next_shift_idx] - shift_end_abs[prev_shift_idx]
-                if gap_minutes != 0:
-                    break
-                chain.insert(0, prev_shift_idx)
-                running_minutes += shift_durations[prev_shift_idx]
-                if running_minutes >= max_chain_for_rest_minutes:
-                    qualifying_chains_by_left[end_shift_idx].append(chain.copy())
+        minimal_chain_by_left = build_minimal_qualifying_chain_by_left(
+            sorted_shift_indices=sorted_shift_indices,
+            shift_start_abs=shift_start_abs,
+            shift_end_abs=shift_end_abs,
+            shift_durations=shift_durations,
+            max_chain_minutes=max_chain_for_rest_minutes,
+        )
 
         short_rest_by_left: dict[int, list[tuple[int, int]]] = defaultdict(list)
         for left_shift_idx in range(len(payload.shifts)):
@@ -258,14 +290,11 @@ def infer_infeasibility_reasons(
             if not required_shift_ids:
                 continue
 
-            for left_shift_idx, chains in qualifying_chains_by_left.items():
+            for left_shift_idx, minimal_chain in minimal_chain_by_left.items():
                 short_rest_targets = short_rest_by_left.get(left_shift_idx, [])
                 if not short_rest_targets:
                     continue
-                forced_chain = any(
-                    all(shift_idx in required_shift_ids for shift_idx in chain)
-                    for chain in chains
-                )
+                forced_chain = all(shift_idx in required_shift_ids for shift_idx in minimal_chain)
                 if not forced_chain:
                     continue
 
@@ -538,26 +567,16 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
         max_chain_for_rest_minutes = payload.feature_toggles.max_worktime_in_row_hours * 60
         sorted_shift_indices = sorted(range(num_shifts), key=lambda idx: shift_order_key(payload.shifts[idx]))
 
-        # Pentru fiecare tura "left", retinem lanturile consecutive (gap=0)
-        # care se termina in acea tura si ating pragul de lucru continuu.
-        qualifying_chains_by_left: dict[int, list[list[int]]] = defaultdict(list)
-        for end_pos, end_shift_idx in enumerate(sorted_shift_indices):
-            running_minutes = shift_durations[end_shift_idx]
-            chain = [end_shift_idx]
-            if running_minutes >= max_chain_for_rest_minutes:
-                qualifying_chains_by_left[end_shift_idx].append(chain.copy())
-
-            for prev_pos in range(end_pos - 1, -1, -1):
-                prev_shift_idx = sorted_shift_indices[prev_pos]
-                next_shift_idx = sorted_shift_indices[prev_pos + 1]
-                gap_minutes = shift_start_abs[next_shift_idx] - shift_end_abs[prev_shift_idx]
-                if gap_minutes != 0:
-                    break
-
-                chain.insert(0, prev_shift_idx)
-                running_minutes += shift_durations[prev_shift_idx]
-                if running_minutes >= max_chain_for_rest_minutes:
-                    qualifying_chains_by_left[end_shift_idx].append(chain.copy())
+        # Pentru fiecare tura "left", retinem doar lantul minim care atinge pragul.
+        # Versiunea anterioara construia toate lanturile valide, ceea ce producea
+        # multe variabile/constraint-uri redundante in model.
+        minimal_chain_by_left = build_minimal_qualifying_chain_by_left(
+            sorted_shift_indices=sorted_shift_indices,
+            shift_start_abs=shift_start_abs,
+            shift_end_abs=shift_end_abs,
+            shift_durations=shift_durations,
+            max_chain_minutes=max_chain_for_rest_minutes,
+        )
 
         hard_short_rest_pairs = []
         soft_short_rest_pairs = []
@@ -577,31 +596,18 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
 
         for employee_idx in range(num_employees):
             reached_max_chain_by_left: dict[int, cp_model.IntVar] = {}
-            for left_shift_idx, chain_windows in qualifying_chains_by_left.items():
-                chain_full_vars = []
-                for chain_idx, chain_window in enumerate(chain_windows):
-                    chain_full = model.new_bool_var(
-                        f"max_chain_e{employee_idx}_left{left_shift_idx}_c{chain_idx}"
-                    )
-                    for shift_idx in chain_window:
-                        model.add(chain_full <= assign[(employee_idx, shift_idx)])
-                    model.add(
-                        chain_full
-                        >= sum(assign[(employee_idx, shift_idx)] for shift_idx in chain_window)
-                        - len(chain_window)
-                        + 1
-                    )
-                    chain_full_vars.append(chain_full)
-
-                if not chain_full_vars:
-                    continue
-
+            for left_shift_idx, minimal_chain in minimal_chain_by_left.items():
                 reached_max_chain = model.new_bool_var(
                     f"max_chain_reached_e{employee_idx}_left{left_shift_idx}"
                 )
-                for chain_full in chain_full_vars:
-                    model.add(reached_max_chain >= chain_full)
-                model.add(reached_max_chain <= sum(chain_full_vars))
+                for shift_idx in minimal_chain:
+                    model.add(reached_max_chain <= assign[(employee_idx, shift_idx)])
+                model.add(
+                    reached_max_chain
+                    >= sum(assign[(employee_idx, shift_idx)] for shift_idx in minimal_chain)
+                    - len(minimal_chain)
+                    + 1
+                )
                 reached_max_chain_by_left[left_shift_idx] = reached_max_chain
 
             # Hard minimum rest: daca lantul a atins pragul, urmatoarea tura
