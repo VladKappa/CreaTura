@@ -23,11 +23,16 @@ export function buildInitialEmployees() {
 
 function normalizeLoadedShift(rawShift, shiftIndex) {
   const safeShift = rawShift && typeof rawShift === "object" ? rawShift : {};
+  const rawName = typeof safeShift.name === "string" ? safeShift.name : "";
+  const normalizedLegacyName =
+    rawName === "Morning" || rawName === "Evening" || rawName === "Night"
+      ? defaultShiftName(shiftIndex)
+      : rawName;
   return normalizeShiftConstraints({
     id: typeof safeShift.id === "string" && safeShift.id ? safeShift.id : nextShiftId(),
     start: typeof safeShift.start === "string" ? safeShift.start : "09:00",
     end: typeof safeShift.end === "string" ? safeShift.end : "17:00",
-    name: typeof safeShift.name === "string" ? safeShift.name : defaultShiftName(shiftIndex),
+    name: normalizedLegacyName || defaultShiftName(shiftIndex),
     constraints: Array.isArray(safeShift.constraints) ? safeShift.constraints : [],
     assignedEmployeeId:
       typeof safeShift.assignedEmployeeId === "string" ? safeShift.assignedEmployeeId : "",

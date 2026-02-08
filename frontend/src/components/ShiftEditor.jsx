@@ -24,7 +24,7 @@ export default function ShiftEditor({
         <Paper key={shift.id} variant="outlined" sx={{ p: 1 }}>
           <Stack spacing={1}>
             <TextField
-              label={`${defaultShiftName(index)} name`}
+              label={t("shift.nameLabel", {}, "Shift Name")}
               value={shift.name || ""}
               placeholder={defaultShiftName(index)}
               disabled={disabled}
