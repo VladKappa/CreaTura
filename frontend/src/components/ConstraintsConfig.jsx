@@ -1,80 +1,110 @@
+import { Box, Paper, Stack, Switch, TextField, Typography } from "@mui/material";
+
 function toNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-export default function ConstraintsConfig({ config, onChange }) {
+function ConfigSection({ title, description, children }) {
+  return (
+    <Paper variant="outlined" sx={{ p: 1.5 }}>
+      <Stack spacing={1.2}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+          {title}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {description}
+        </Typography>
+        {children}
+      </Stack>
+    </Paper>
+  );
+}
+
+function EnabledSwitch({ checked, onChange, label }) {
+  return (
+    <Stack direction="row" spacing={1} alignItems="center">
+      <Switch checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <Typography variant="body2">{label}</Typography>
+    </Stack>
+  );
+}
+
+export default function ConstraintsConfig({ t, config, onChange }) {
   function setConfig(key, value) {
     onChange((prev) => ({ ...prev, [key]: value }));
   }
 
   return (
-    <section className="constraints-config">
-      <p className="subtle">
-        Configure default solver rules and preference weights used when building solve requests.
-      </p>
+    <Stack spacing={1.2}>
+      <Typography variant="body2" color="text.secondary">
+        {t(
+          "constraints.description",
+          {},
+          "Configure default solver rules and preference weights used when building solve requests."
+        )}
+      </Typography>
 
-      <div className="constraint-config-item">
-        <div>
-          <h4>Max Worktime In A Row</h4>
-          <p className="subtle">
-            Hard rule. Limits continuous back-to-back assignment time for each employee.
-            Applies to shift chains (not a single shift): with 8h max, two 4h shifts in a row are
-            allowed, two 8h shifts are not.
-          </p>
-        </div>
-        <label className="checkbox dense">
-          <input
-            type="checkbox"
-            checked={config.maxWorktimeInRowEnabled}
-            onChange={(e) => setConfig("maxWorktimeInRowEnabled", e.target.checked)}
-          />
-          Enabled
-        </label>
-        <label>
-          Maximum continuous work (hours)
-          <input
-            type="number"
-            min="1"
-            max="24"
-            step="1"
-            disabled={!config.maxWorktimeInRowEnabled}
-            value={config.maxWorktimeInRowHours}
-            onChange={(e) =>
-              setConfig(
-                "maxWorktimeInRowHours",
-                Math.round(Math.max(1, Math.min(24, toNumber(e.target.value, 8))))
-              )
-            }
-          />
-        </label>
-      </div>
+      <ConfigSection
+        title={t("constraints.maxWorktimeTitle", {}, "Max Worktime In A Row")}
+        description={t(
+          "constraints.maxWorktimeDesc",
+          {},
+          "Hard rule. Limits continuous back-to-back assignment time for each employee."
+        )}
+      >
+        <EnabledSwitch
+          checked={config.maxWorktimeInRowEnabled}
+          onChange={(value) => setConfig("maxWorktimeInRowEnabled", value)}
+          label={t("common.enabled", {}, "Enabled")}
+        />
+        <TextField
+          type="number"
+          label={t("constraints.maxWorktimeInput", {}, "Maximum continuous work (hours)")}
+          inputProps={{ min: 1, max: 24, step: 1 }}
+          disabled={!config.maxWorktimeInRowEnabled}
+          value={config.maxWorktimeInRowHours}
+          size="small"
+          onChange={(e) =>
+            setConfig(
+              "maxWorktimeInRowHours",
+              Math.round(Math.max(1, Math.min(24, toNumber(e.target.value, 8))))
+            )
+          }
+        />
+      </ConfigSection>
 
-      <div className="constraint-config-item">
-        <div>
-          <h4>Minimum Rest Gap After Configured Max Worktime In A Row</h4>
-          <p className="subtle">
-            Soft rule. Penalizes assignments where rest after a shift chain is below the configured
-            hours once the max worktime-in-a-row chain is reached.
-          </p>
-        </div>
-        <label className="checkbox dense">
-          <input
-            type="checkbox"
-            checked={config.restGapEnabled}
-            onChange={(e) => setConfig("restGapEnabled", e.target.checked)}
-          />
-          Enabled
-        </label>
-        <label>
-          Minimum rest (hours)
-          <input
+      <ConfigSection
+        title={t(
+          "constraints.restGapTitle",
+          {},
+          "Minimum Rest Gap After Configured Max Worktime In A Row"
+        )}
+        description={t(
+          "constraints.restGapDesc",
+          {},
+          "Soft rule. Penalizes assignments where rest after a shift chain is below the configured hours."
+        )}
+      >
+        <EnabledSwitch
+          checked={config.restGapEnabled}
+          onChange={(value) => setConfig("restGapEnabled", value)}
+          label={t("common.enabled", {}, "Enabled")}
+        />
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" },
+            gap: 1,
+          }}
+        >
+          <TextField
             type="number"
-            min="1"
-            max="24"
-            step="1"
+            label={t("constraints.restGapHours", {}, "Minimum rest (hours)")}
+            inputProps={{ min: 1, max: 24, step: 1 }}
             disabled={!config.restGapEnabled}
             value={config.restGapHours}
+            size="small"
             onChange={(e) =>
               setConfig(
                 "restGapHours",
@@ -82,16 +112,13 @@ export default function ConstraintsConfig({ config, onChange }) {
               )
             }
           />
-        </label>
-        <label>
-          Penalty weight
-          <input
+          <TextField
             type="number"
-            min="1"
-            max="100"
-            step="1"
+            label={t("constraints.restGapWeight", {}, "Penalty weight")}
+            inputProps={{ min: 1, max: 100, step: 1 }}
             disabled={!config.restGapEnabled}
             value={config.restGapWeight}
+            size="small"
             onChange={(e) =>
               setConfig(
                 "restGapWeight",
@@ -99,33 +126,36 @@ export default function ConstraintsConfig({ config, onChange }) {
               )
             }
           />
-        </label>
-      </div>
+        </Box>
+      </ConfigSection>
 
-      <div className="constraint-config-item">
-        <div>
-          <h4>Balance Worked Hours</h4>
-          <p className="subtle">
-            Soft rule. Penalizes imbalance above allowed span derived from avg shift duration.
-          </p>
-        </div>
-        <label className="checkbox dense">
-          <input
-            type="checkbox"
-            checked={config.balanceWorkedHoursEnabled}
-            onChange={(e) => setConfig("balanceWorkedHoursEnabled", e.target.checked)}
-          />
-          Enabled
-        </label>
-        <label>
-          Penalty weight
-          <input
+      <ConfigSection
+        title={t("constraints.balanceTitle", {}, "Balance Worked Hours")}
+        description={t(
+          "constraints.balanceDesc",
+          {},
+          "Soft rule. Penalizes imbalance above allowed span derived from avg shift duration."
+        )}
+      >
+        <EnabledSwitch
+          checked={config.balanceWorkedHoursEnabled}
+          onChange={(value) => setConfig("balanceWorkedHoursEnabled", value)}
+          label={t("common.enabled", {}, "Enabled")}
+        />
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" },
+            gap: 1,
+          }}
+        >
+          <TextField
             type="number"
-            min="1"
-            max="100"
-            step="1"
+            label={t("constraints.balanceWeight", {}, "Penalty weight")}
+            inputProps={{ min: 1, max: 100, step: 1 }}
             disabled={!config.balanceWorkedHoursEnabled}
             value={config.balanceWorkedHoursWeight}
+            size="small"
             onChange={(e) =>
               setConfig(
                 "balanceWorkedHoursWeight",
@@ -133,16 +163,13 @@ export default function ConstraintsConfig({ config, onChange }) {
               )
             }
           />
-        </label>
-        <label>
-          Allowed span multiplier
-          <input
+          <TextField
             type="number"
-            min="0.1"
-            max="10"
-            step="0.1"
+            label={t("constraints.balanceMultiplier", {}, "Allowed span multiplier")}
+            inputProps={{ min: 0.1, max: 10, step: 0.1 }}
             disabled={!config.balanceWorkedHoursEnabled}
             value={config.balanceWorkedHoursMaxSpanMultiplier}
+            size="small"
             onChange={(e) =>
               setConfig(
                 "balanceWorkedHoursMaxSpanMultiplier",
@@ -150,24 +177,30 @@ export default function ConstraintsConfig({ config, onChange }) {
               )
             }
           />
-        </label>
-      </div>
+        </Box>
+      </ConfigSection>
 
-      <div className="constraint-config-item">
-        <div>
-          <h4>Preference Mapping Weights</h4>
-          <p className="subtle">
-            Weights for preferences assigned in Shift Inspector and sent as soft constraints.
-          </p>
-        </div>
-        <label>
-          Preferred weight
-          <input
+      <ConfigSection
+        title={t("constraints.prefTitle", {}, "Preference Mapping Weights")}
+        description={t(
+          "constraints.prefDesc",
+          {},
+          "Weights for preferences assigned in Shift Inspector and sent as soft constraints."
+        )}
+      >
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" },
+            gap: 1,
+          }}
+        >
+          <TextField
             type="number"
-            min="1"
-            max="100"
-            step="1"
+            label={t("constraints.prefPreferred", {}, "Preferred weight")}
+            inputProps={{ min: 1, max: 100, step: 1 }}
             value={config.preferredWeight}
+            size="small"
             onChange={(e) =>
               setConfig(
                 "preferredWeight",
@@ -175,15 +208,12 @@ export default function ConstraintsConfig({ config, onChange }) {
               )
             }
           />
-        </label>
-        <label>
-          Unpreferred weight
-          <input
+          <TextField
             type="number"
-            min="1"
-            max="100"
-            step="1"
+            label={t("constraints.prefUnpreferred", {}, "Unpreferred weight")}
+            inputProps={{ min: 1, max: 100, step: 1 }}
             value={config.unpreferredWeight}
+            size="small"
             onChange={(e) =>
               setConfig(
                 "unpreferredWeight",
@@ -191,8 +221,8 @@ export default function ConstraintsConfig({ config, onChange }) {
               )
             }
           />
-        </label>
-      </div>
-    </section>
+        </Box>
+      </ConfigSection>
+    </Stack>
   );
 }

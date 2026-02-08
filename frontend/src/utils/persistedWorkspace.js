@@ -97,6 +97,15 @@ export function hydratePersistedState(rawState) {
         }
       : null;
 
+  const rawUiPrefs =
+    rawState.uiPreferences && typeof rawState.uiPreferences === "object"
+      ? rawState.uiPreferences
+      : {};
+  const uiPreferences = {
+    themeMode: rawUiPrefs.themeMode === "light" ? "light" : "dark",
+    language: rawUiPrefs.language === "ro" ? "ro" : "en",
+  };
+
   return {
     employees: hydratedEmployees,
     selectedEmployeeId,
@@ -105,5 +114,6 @@ export function hydratePersistedState(rawState) {
       Boolean(rawState.balanceWorkedHours)
     ),
     shiftClipboard: clipboard,
+    uiPreferences,
   };
 }

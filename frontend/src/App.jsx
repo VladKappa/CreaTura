@@ -1,4 +1,33 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import AutoFixHighOutlinedIcon from "@mui/icons-material/AutoFixHighOutlined";
+import DarkModeRoundedIcon from "@mui/icons-material/DarkModeRounded";
+import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
+import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined";
+import SettingsSuggestOutlinedIcon from "@mui/icons-material/SettingsSuggestOutlined";
+import ViewWeekOutlinedIcon from "@mui/icons-material/ViewWeekOutlined";
+import {
+  Alert,
+  AppBar,
+  Box,
+  Button,
+  Chip,
+  Container,
+  CssBaseline,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  Drawer,
+  IconButton,
+  Stack,
+  ThemeProvider,
+  ToggleButton,
+  ToggleButtonGroup,
+  Toolbar,
+  Tooltip,
+  Typography,
+  createTheme,
+} from "@mui/material";
 import { fetchScheduleState, saveScheduleState, solveSchedule } from "./api/scheduleApi";
 import ConstraintsConfig from "./components/ConstraintsConfig";
 import EmployeeSidebar from "./components/EmployeeSidebar";
@@ -7,6 +36,7 @@ import SolveStats from "./components/SolveStats";
 import TemplateGrid from "./components/TemplateGrid";
 import WeekCalendar from "./components/WeekCalendar";
 import DEFAULT_CONSTRAINTS_CONFIG from "./config/constraintsConfig";
+import { SUPPORTED_LANGUAGES, translate } from "./i18n/messages";
 import {
   buildWeekFromToday,
   cloneShifts,
@@ -37,6 +67,14 @@ function setErrorKey(setter, key, value) {
   setter((prev) => ({ ...prev, [key]: value }));
 }
 
+function normalizeThemeMode(value) {
+  return value === "light" ? "light" : "dark";
+}
+
+function normalizeLanguage(value) {
+  return SUPPORTED_LANGUAGES.some((item) => item.code === value) ? value : "en";
+}
+
 export default function App() {
   const [newName, setNewName] = useState("");
   const [newRole, setNewRole] = useState("");
@@ -56,6 +94,53 @@ export default function App() {
   const [isStateHydrating, setIsStateHydrating] = useState(true);
   const [persistMessage, setPersistMessage] = useState("Loading saved workspace...");
   const [persistError, setPersistError] = useState("");
+  const [themeMode, setThemeMode] = useState("dark");
+  const [language, setLanguage] = useState("en");
+
+  const t = useCallback(
+    (key, variables = {}, fallback = "") => translate(language, key, variables, fallback),
+    [language]
+  );
+
+  const theme = useMemo(
+    () =>
+      createTheme({
+        palette: {
+          mode: themeMode,
+          primary: {
+            main: themeMode === "dark" ? "#5CC8FF" : "#0D47A1",
+          },
+          secondary: {
+            main: themeMode === "dark" ? "#80CBC4" : "#00695C",
+          },
+          background: {
+            default: themeMode === "dark" ? "#0F1726" : "#EEF2F8",
+            paper: themeMode === "dark" ? "#182132" : "#FFFFFF",
+          },
+        },
+        shape: {
+          borderRadius: 12,
+        },
+        typography: {
+          fontFamily: '"IBM Plex Sans", "Segoe UI", "Roboto", sans-serif',
+        },
+        components: {
+          MuiPaper: {
+            styleOverrides: {
+              root: {
+                backgroundImage: "none",
+              },
+            },
+          },
+          MuiButton: {
+            defaultProps: {
+              size: "small",
+            },
+          },
+        },
+      }),
+    [themeMode]
+  );
 
   const week = useMemo(() => buildWeekFromToday(), []);
   const selectedEmployee =
@@ -72,13 +157,17 @@ export default function App() {
   const hasFeasibleSolve = Boolean(solveResult && solveResult.status !== "infeasible");
   const persistedStatePayload = useMemo(
     () => ({
-      version: 1,
+      version: 2,
       employees,
       selectedEmployeeId: selectedEmployeeId || employees[0]?.id || null,
       constraintsConfig,
       shiftClipboard,
+      uiPreferences: {
+        themeMode,
+        language,
+      },
     }),
-    [employees, selectedEmployeeId, constraintsConfig, shiftClipboard]
+    [employees, selectedEmployeeId, constraintsConfig, shiftClipboard, themeMode, language]
   );
 
   useEffect(() => {
@@ -94,6 +183,8 @@ export default function App() {
           setSelectedEmployeeId(restored.selectedEmployeeId);
           setConstraintsConfig(restored.constraintsConfig);
           setShiftClipboard(restored.shiftClipboard);
+          setThemeMode(normalizeThemeMode(restored.uiPreferences?.themeMode));
+          setLanguage(normalizeLanguage(restored.uiPreferences?.language));
           setPersistMessage(
             payload?.updated_at
               ? `Loaded saved workspace (${new Date(payload.updated_at).toLocaleString()})`
@@ -262,7 +353,7 @@ export default function App() {
       setErrorKey(
         setDefaultErrors,
         day.dayIndex,
-        `No room left to create another default shift for ${day.label}.`
+        t("week.defaultAddError", { day: day.label }, `No room left to create another default shift for ${day.label}.`)
       );
       return;
     }
@@ -434,7 +525,11 @@ export default function App() {
 
     const nextShift = findNextAvailableShift(current);
     if (!nextShift) {
-      setErrorKey(setOverrideErrors, day.iso, `No room left to create another shift for ${day.label}.`);
+      setErrorKey(
+        setOverrideErrors,
+        day.iso,
+        t("week.overrideAddError", { day: day.label }, `No room left to create another shift for ${day.label}.`)
+      );
       return;
     }
 
@@ -507,101 +602,207 @@ export default function App() {
     }
   }
 
+  const persistenceLine = isStateHydrating
+    ? t("app.persistence.loading", {}, "Workspace persistence: loading...")
+    : persistError
+      ? t("app.persistence.error", { error: persistError }, `Workspace persistence error: ${persistError}`)
+      : t("app.persistence.status", { message: persistMessage }, `Workspace persistence: ${persistMessage}`);
+
   return (
-    <main className="app-shell single">
-      <header className="panel app-header">
-        <div>
-          <h1>CreaTura</h1>
-          <p className="subtle">Employee scheduling workspace for shifts, assignments, and preferences.</p>
-          <p className="subtle">
-            {isStateHydrating
-              ? "Workspace persistence: loading..."
-              : persistError
-                ? `Workspace persistence error: ${persistError}`
-                : `Workspace persistence: ${persistMessage}`}
-          </p>
-        </div>
-        <div className="toolbar-actions">
-          <button
-            type="button"
-            disabled={!selectedEmployee}
-            className={isSolving ? "quiet" : ""}
-            onClick={onSolveClick}
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <Box sx={{ minHeight: "100vh" }}>
+        <AppBar
+          position="sticky"
+          color="transparent"
+          elevation={0}
+          sx={{
+            borderBottom: 1,
+            borderColor: "divider",
+            backdropFilter: "blur(8px)",
+            backgroundColor: (muiTheme) =>
+              muiTheme.palette.mode === "dark"
+                ? "rgba(15, 23, 38, 0.82)"
+                : "rgba(238, 242, 248, 0.84)",
+          }}
+        >
+          <Toolbar
+            sx={{
+              alignItems: "flex-start",
+              gap: 2,
+              flexWrap: "wrap",
+              py: 1.5,
+            }}
           >
-            {isSolving ? "Solving..." : "Solve"}
-          </button>
-          <button type="button" className="quiet" onClick={() => setIsEmployeePanelOpen(true)}>
-            Employees
-          </button>
-          <button
-            type="button"
-            className="quiet"
-            disabled={!selectedEmployee}
-            onClick={() => setIsTemplatePopupOpen(true)}
-          >
-            Default Template
-          </button>
-          <button type="button" className="quiet" onClick={() => setIsConstraintsPopupOpen(true)}>
-            Constraints Configure
-          </button>
-        </div>
-      </header>
+            <Box sx={{ flex: "1 1 380px", minWidth: 260 }}>
+              <Typography variant="h5" sx={{ fontWeight: 700, letterSpacing: 0.2 }}>
+                CreaTura
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {t(
+                  "app.subtitle",
+                  {},
+                  "Employee scheduling workspace for shifts, assignments, and preferences."
+                )}
+              </Typography>
+              <Typography
+                variant="caption"
+                color={persistError ? "error.main" : "text.secondary"}
+                sx={{ display: "block", mt: 0.75 }}
+              >
+                {persistenceLine}
+              </Typography>
+            </Box>
 
-      <section className="content">
-        {solveError ? (
-          <div className="panel">
-            <p className="error-text">{solveError}</p>
-          </div>
-        ) : null}
-        {!selectedEmployee ? (
-          <div className="panel">
-            <h2>No employee selected</h2>
-            <p>Open Employees from the top toolbar and select one.</p>
-          </div>
-        ) : (
-          <>
-            <WeekCalendar
-              week={week}
-              employee={selectedEmployee}
-              employees={employees}
-              onToggleOverride={toggleOverride}
-              onAddOverrideShift={addOverrideShift}
-              onRemoveOverrideShift={removeOverrideShift}
-              onUpdateOverrideShift={updateOverrideShift}
-              getOverrideError={getOverrideError}
-              onCopyDay={copyWeekDay}
-              onPasteDay={pasteToWeekOverride}
-              clipboardLabel={shiftClipboard?.sourceLabel || ""}
-              onAddShiftConstraint={addShiftConstraint}
-              onUpdateShiftConstraint={updateShiftConstraint}
-              onRemoveShiftConstraint={removeShiftConstraint}
-              solvedAssignments={solvedAssignments}
-            />
-          </>
-        )}
-        {solveResult ? <SolveDiagnostics solveResult={solveResult} /> : null}
-        {hasFeasibleSolve ? (
-          <SolveStats
-            solveResult={solveResult}
-            employees={employees}
-            solvePayload={lastSolvePayload}
-          />
-        ) : null}
-      </section>
+            <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", alignItems: "center" }}>
+              <Chip
+                label={`${t("header.language", {}, "Language")}: ${language.toUpperCase()}`}
+                size="small"
+                variant="outlined"
+              />
+              <ToggleButtonGroup
+                size="small"
+                exclusive
+                value={language}
+                onChange={(_, next) => {
+                  if (!next) return;
+                  setLanguage(next);
+                }}
+              >
+                {SUPPORTED_LANGUAGES.map((lang) => (
+                  <ToggleButton key={lang.code} value={lang.code}>
+                    {lang.label}
+                  </ToggleButton>
+                ))}
+              </ToggleButtonGroup>
+              <Tooltip
+                title={
+                  themeMode === "dark"
+                    ? t("header.themeDark", {}, "Dark")
+                    : t("header.themeLight", {}, "Light")
+                }
+              >
+                <IconButton
+                  color="primary"
+                  onClick={() => setThemeMode((prev) => (prev === "dark" ? "light" : "dark"))}
+                >
+                  {themeMode === "dark" ? <DarkModeRoundedIcon /> : <LightModeRoundedIcon />}
+                </IconButton>
+              </Tooltip>
+            </Stack>
 
-      {isEmployeePanelOpen ? (
-        <div className="modal-backdrop" onClick={() => setIsEmployeePanelOpen(false)}>
-          <section
-            className="modal-panel modal-panel-left"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-head">
-              <h3>Employees</h3>
-              <button type="button" className="quiet mini-btn" onClick={() => setIsEmployeePanelOpen(false)}>
-                Close
-              </button>
-            </div>
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{ width: "100%", justifyContent: "flex-end", flexWrap: "wrap" }}
+            >
+              <Button
+                variant="contained"
+                startIcon={<AutoFixHighOutlinedIcon />}
+                onClick={onSolveClick}
+                disabled={!selectedEmployee || isSolving}
+              >
+                {isSolving ? t("app.solving", {}, "Solving...") : t("app.solve", {}, "Solve")}
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<PeopleAltOutlinedIcon />}
+                onClick={() => setIsEmployeePanelOpen(true)}
+              >
+                {t("app.employees", {}, "Employees")}
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<ViewWeekOutlinedIcon />}
+                onClick={() => setIsTemplatePopupOpen(true)}
+                disabled={!selectedEmployee}
+              >
+                {t("app.defaultTemplate", {}, "Default Template")}
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<SettingsSuggestOutlinedIcon />}
+                onClick={() => setIsConstraintsPopupOpen(true)}
+              >
+                {t("app.constraintsConfig", {}, "Constraints Configure")}
+              </Button>
+            </Stack>
+          </Toolbar>
+        </AppBar>
+
+        <Container maxWidth={false} sx={{ px: { xs: 1.2, md: 2.2 }, py: 2.2 }}>
+          <Stack spacing={1.5}>
+            {solveError ? <Alert severity="error">{solveError}</Alert> : null}
+
+            {!selectedEmployee ? (
+              <Alert severity="info">
+                <Typography variant="subtitle2">
+                  {t("app.noEmployeeTitle", {}, "No employee selected")}
+                </Typography>
+                <Typography variant="body2">
+                  {t(
+                    "app.noEmployeeHint",
+                    {},
+                    "Open Employees from the top toolbar and select one."
+                  )}
+                </Typography>
+              </Alert>
+            ) : (
+              <WeekCalendar
+                t={t}
+                week={week}
+                employee={selectedEmployee}
+                employees={employees}
+                onToggleOverride={toggleOverride}
+                onAddOverrideShift={addOverrideShift}
+                onRemoveOverrideShift={removeOverrideShift}
+                onUpdateOverrideShift={updateOverrideShift}
+                getOverrideError={getOverrideError}
+                onCopyDay={copyWeekDay}
+                onPasteDay={pasteToWeekOverride}
+                clipboardLabel={shiftClipboard?.sourceLabel || ""}
+                onAddShiftConstraint={addShiftConstraint}
+                onUpdateShiftConstraint={updateShiftConstraint}
+                onRemoveShiftConstraint={removeShiftConstraint}
+                solvedAssignments={solvedAssignments}
+              />
+            )}
+
+            {solveResult ? <SolveDiagnostics t={t} solveResult={solveResult} /> : null}
+            {hasFeasibleSolve ? (
+              <SolveStats
+                t={t}
+                solveResult={solveResult}
+                employees={employees}
+                solvePayload={lastSolvePayload}
+              />
+            ) : null}
+          </Stack>
+        </Container>
+
+        <Drawer
+          anchor="left"
+          open={isEmployeePanelOpen}
+          onClose={() => setIsEmployeePanelOpen(false)}
+          PaperProps={{
+            sx: {
+              width: { xs: "100%", sm: 420 },
+              p: 2,
+            },
+          }}
+        >
+          <Stack spacing={1.5} sx={{ height: "100%" }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Typography variant="h6">
+                {t("app.employeeDialogTitle", {}, "Employees")}
+              </Typography>
+              <Button size="small" onClick={() => setIsEmployeePanelOpen(false)}>
+                {t("common.close", {}, "Close")}
+              </Button>
+            </Stack>
+            <Divider />
             <EmployeeSidebar
+              t={t}
               newName={newName}
               newRole={newRole}
               onNameChange={setNewName}
@@ -616,52 +817,49 @@ export default function App() {
               onRemoveEmployee={removeEmployee}
               showTop={false}
             />
-          </section>
-        </div>
-      ) : null}
+          </Stack>
+        </Drawer>
 
-      {isTemplatePopupOpen && selectedEmployee ? (
-        <div className="modal-backdrop" onClick={() => setIsTemplatePopupOpen(false)}>
-          <section className="modal-panel modal-panel-wide" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <h3>Default Template (Mon-Sun)</h3>
-              <button type="button" className="quiet mini-btn" onClick={() => setIsTemplatePopupOpen(false)}>
-                Close
-              </button>
-            </div>
-            <TemplateGrid
-              week={week}
-              employee={selectedEmployee}
-              onAddShift={addDefaultShift}
-              onRemoveShift={removeDefaultShift}
-              onUpdateShift={updateDefaultShift}
-              getErrorMessage={getDefaultError}
-              onCopyDay={copyDefaultDay}
-              onPasteDay={pasteDefaultDay}
-              clipboardLabel={shiftClipboard?.sourceLabel || ""}
-              showTitle={false}
-            />
-          </section>
-        </div>
-      ) : null}
+        <Dialog
+          open={isTemplatePopupOpen && selectedEmployee !== null}
+          onClose={() => setIsTemplatePopupOpen(false)}
+          maxWidth="xl"
+          fullWidth
+        >
+          <DialogTitle>{t("app.templateDialogTitle", {}, "Default Template (Mon-Sun)")}</DialogTitle>
+          <DialogContent dividers>
+            {selectedEmployee ? (
+              <TemplateGrid
+                t={t}
+                week={week}
+                employee={selectedEmployee}
+                onAddShift={addDefaultShift}
+                onRemoveShift={removeDefaultShift}
+                onUpdateShift={updateDefaultShift}
+                getErrorMessage={getDefaultError}
+                onCopyDay={copyDefaultDay}
+                onPasteDay={pasteDefaultDay}
+                clipboardLabel={shiftClipboard?.sourceLabel || ""}
+                showTitle={false}
+              />
+            ) : null}
+          </DialogContent>
+        </Dialog>
 
-      {isConstraintsPopupOpen ? (
-        <div className="modal-backdrop" onClick={() => setIsConstraintsPopupOpen(false)}>
-          <section className="modal-panel modal-panel-mid" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <h3>Constraints Configure</h3>
-              <button
-                type="button"
-                className="quiet mini-btn"
-                onClick={() => setIsConstraintsPopupOpen(false)}
-              >
-                Close
-              </button>
-            </div>
-            <ConstraintsConfig config={constraintsConfig} onChange={setConstraintsConfig} />
-          </section>
-        </div>
-      ) : null}
-    </main>
+        <Dialog
+          open={isConstraintsPopupOpen}
+          onClose={() => setIsConstraintsPopupOpen(false)}
+          maxWidth="md"
+          fullWidth
+        >
+          <DialogTitle>
+            {t("app.constraintsDialogTitle", {}, "Constraints Configure")}
+          </DialogTitle>
+          <DialogContent dividers>
+            <ConstraintsConfig t={t} config={constraintsConfig} onChange={setConstraintsConfig} />
+          </DialogContent>
+        </Dialog>
+      </Box>
+    </ThemeProvider>
   );
 }

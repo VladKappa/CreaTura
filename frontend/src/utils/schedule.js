@@ -19,6 +19,21 @@ export function defaultShiftName(index) {
   return `Shift ${index + 1}`;
 }
 
+function hashShiftName(name) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i += 1) {
+    hash = (hash << 5) - hash + name.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+export function getShiftColor(shiftName, fallbackIndex = 0) {
+  const safeName = String(shiftName || "").trim() || defaultShiftName(fallbackIndex);
+  const index = hashShiftName(safeName.toLowerCase()) % SHIFT_COLORS.length;
+  return SHIFT_COLORS[index];
+}
+
 export function makeShift(start = "09:00", end = "17:00", name = "") {
   return {
     id: nextShiftId(),
@@ -30,10 +45,10 @@ export function makeShift(start = "09:00", end = "17:00", name = "") {
 }
 
 export const PREFERENCE_META = {
-  desired: { label: "Desired", emoji: "⭐" },
-  undesired: { label: "Undesired", emoji: "🚫" },
-  preferred: { label: "Preferred", emoji: "👍" },
-  unpreferred: { label: "Unpreferred", emoji: "👎" },
+  desired: { label: "Desired", emoji: "\u2B50" },
+  undesired: { label: "Undesired", emoji: "\uD83D\uDEAB" },
+  preferred: { label: "Preferred", emoji: "\uD83D\uDC4D" },
+  unpreferred: { label: "Unpreferred", emoji: "\uD83D\uDC4E" },
 };
 
 export const PREFERENCE_KEYS = Object.keys(PREFERENCE_META);
@@ -263,7 +278,7 @@ export function findNextAvailableShift(shifts) {
     const candidateStart = (anchor.start + offset) % MINUTES_IN_DAY;
     if (!isFreeWindow(occupied, candidateStart, duration)) continue;
     const candidateEnd = (candidateStart + duration) % MINUTES_IN_DAY;
-    const name = defaultShiftName(shifts.length % SHIFT_COLORS.length);
+    const name = defaultShiftName(shifts.length);
     return makeShift(minutesToTime(candidateStart), minutesToTime(candidateEnd), name);
   }
 
@@ -281,8 +296,8 @@ export function buildOwnSegments(shifts) {
   shifts.forEach((shift, index) => {
     const start = timeToMinutes(shift.start);
     const end = timeToMinutes(shift.end);
-    const color = SHIFT_COLORS[index % SHIFT_COLORS.length];
     const shiftName = shift.name?.trim() || defaultShiftName(index);
+    const color = getShiftColor(shiftName, index);
 
     if (end > start) {
       segments.push({
@@ -324,7 +339,7 @@ export function buildCarryInSegments(previousDayShifts) {
       start: 0,
       end: timeToMinutes(shift.end),
       carry: true,
-      color: SHIFT_COLORS[index % SHIFT_COLORS.length],
+      color: getShiftColor(shiftName, index),
       label: `${shiftName}: ${shiftText(shift)}`,
       shiftId: shift.id,
       shiftIndex: index,

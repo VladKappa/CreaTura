@@ -1,3 +1,15 @@
+import {
+  Alert,
+  Box,
+  Chip,
+  List,
+  ListItem,
+  ListItemText,
+  Paper,
+  Stack,
+  Typography,
+} from "@mui/material";
+
 function formatShift(shift) {
   if (!shift) return "Unknown shift";
   return `${shift.day} ${shift.date} ${shift.type} (${shift.start}-${shift.end})`;
@@ -38,7 +50,7 @@ function describeUnsatisfied(item) {
   return `${employee}: ${item.constraint_type} (${item.status}).`;
 }
 
-export default function SolveDiagnostics({ solveResult }) {
+export default function SolveDiagnostics({ t, solveResult }) {
   if (!solveResult) return null;
 
   const isInfeasible = solveResult.status === "infeasible";
@@ -53,93 +65,193 @@ export default function SolveDiagnostics({ solveResult }) {
 
   if (isInfeasible) {
     return (
-      <section className="panel solve-diagnostics">
-        <h3>Solve Diagnostics</h3>
-        <div className="solve-diag-infeasible">
-          <p className="solve-diag-infeasible-title">No feasible schedule found</p>
-          <p className="solve-diag-infeasible-reason">
-            {solveResult.reason ||
-              "Current hard constraints and required shift coverage cannot be satisfied together."}
-          </p>
-        </div>
-        {solveResult.infeasibility_reasons?.length ? (
-          <details className="solve-diag-details" open>
-            <summary>Likely infeasibility causes</summary>
-            <ul className="solve-diag-list">
-              {solveResult.infeasibility_reasons.map((reason, index) => (
-                <li key={`${reason}-${index}`}>{reason}</li>
+      <Paper variant="outlined" sx={{ p: 1.5 }}>
+        <Stack spacing={1.2}>
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>
+            {t("solve.diagnosticsTitle", {}, "Solve Diagnostics")}
+          </Typography>
+          <Alert severity="error">
+            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+              {t("solve.infeasibleTitle", {}, "No feasible schedule found")}
+            </Typography>
+            <Typography variant="body2">
+              {solveResult.reason ||
+                t(
+                  "solve.infeasibleReason",
+                  {},
+                  "Current hard constraints and required shift coverage cannot be satisfied together."
+                )}
+            </Typography>
+          </Alert>
+
+          {solveResult.infeasibility_reasons?.length ? (
+            <Box>
+              <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                {t("solve.likelyCauses", {}, "Likely infeasibility causes")}
+              </Typography>
+              <List dense sx={{ p: 0 }}>
+                {solveResult.infeasibility_reasons.map((reason, index) => (
+                  <ListItem key={`${reason}-${index}`} sx={{ py: 0.2 }}>
+                    <ListItemText
+                      primaryTypographyProps={{ variant: "body2" }}
+                      primary={reason}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            </Box>
+          ) : null}
+
+          {solveResult.applied_defaults?.length ? (
+            <Typography variant="body2" color="text.secondary">
+              {t(
+                "solve.defaultRules",
+                { rules: solveResult.applied_defaults.join(", ") },
+                `Default rules: ${solveResult.applied_defaults.join(", ")}`
+              )}
+            </Typography>
+          ) : null}
+          {solveResult.enabled_feature_toggles?.length ? (
+            <Typography variant="body2" color="text.secondary">
+              {t(
+                "solve.toggles",
+                { toggles: solveResult.enabled_feature_toggles.join(", ") },
+                `Enabled feature toggles: ${solveResult.enabled_feature_toggles.join(", ")}`
+              )}
+            </Typography>
+          ) : null}
+          {solveResult.warnings?.length ? (
+            <Stack spacing={0.8}>
+              {solveResult.warnings.map((warning, idx) => (
+                <Alert key={`${warning}-${idx}`} severity="warning" sx={{ py: 0 }}>
+                  {warning}
+                </Alert>
               ))}
-            </ul>
-          </details>
-        ) : null}
-        {solveResult.applied_defaults?.length ? (
-          <p className="subtle">Default rules: {solveResult.applied_defaults.join(", ")}</p>
-        ) : null}
-        {solveResult.enabled_feature_toggles?.length ? (
-          <p className="subtle">
-            Enabled feature toggles: {solveResult.enabled_feature_toggles.join(", ")}
-          </p>
-        ) : null}
-        {solveResult.warnings?.length ? (
-          <div className="solve-diag-warnings">
-            {solveResult.warnings.map((warning, idx) => (
-              <p key={`${warning}-${idx}`} className="error-text">
-                {warning}
-              </p>
-            ))}
-          </div>
-        ) : (
-          <p className="subtle">No additional solver warnings were returned.</p>
-        )}
-        <ul className="solve-diag-actions">
-          <li>Relax one or more hard constraints (Desired/Undesired assignments).</li>
-          <li>Increase available employees or reduce required coverage per shift.</li>
-          <li>Adjust custom day overrides if overnight/default rules create conflicts.</li>
-        </ul>
-      </section>
+            </Stack>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              {t("solve.noWarnings", {}, "No additional solver warnings were returned.")}
+            </Typography>
+          )}
+
+          <List dense sx={{ p: 0 }}>
+            <ListItem sx={{ py: 0.2 }}>
+              <ListItemText
+                primaryTypographyProps={{ variant: "body2" }}
+                primary={t(
+                  "solve.action.relax",
+                  {},
+                  "Relax one or more hard constraints (Desired/Undesired assignments)."
+                )}
+              />
+            </ListItem>
+            <ListItem sx={{ py: 0.2 }}>
+              <ListItemText
+                primaryTypographyProps={{ variant: "body2" }}
+                primary={t(
+                  "solve.action.staff",
+                  {},
+                  "Increase available employees or reduce required coverage per shift."
+                )}
+              />
+            </ListItem>
+            <ListItem sx={{ py: 0.2 }}>
+              <ListItemText
+                primaryTypographyProps={{ variant: "body2" }}
+                primary={t(
+                  "solve.action.overrides",
+                  {},
+                  "Adjust custom day overrides if overnight/default rules create conflicts."
+                )}
+              />
+            </ListItem>
+          </List>
+        </Stack>
+      </Paper>
     );
   }
 
   return (
-    <section className="panel solve-diagnostics">
-      <h3>Solve Diagnostics</h3>
-      <div className="solve-diag-summary">
-        <span>Total objective: {total ?? "-"}</span>
-        <span>Rewards: +{reward}</span>
-        <span>Penalties: {penalty}</span>
-        <span>Unsatisfied soft constraints: {unsatisfied.length}</span>
-      </div>
-      {solveResult.applied_defaults?.length ? (
-        <p className="subtle">Default rules: {solveResult.applied_defaults.join(", ")}</p>
-      ) : null}
-      {solveResult.enabled_feature_toggles?.length ? (
-        <p className="subtle">
-          Enabled feature toggles: {solveResult.enabled_feature_toggles.join(", ")}
-        </p>
-      ) : null}
-      {solveResult.warnings?.length ? (
-        <div className="solve-diag-warnings">
-          {solveResult.warnings.map((warning, idx) => (
-            <p key={`${warning}-${idx}`} className="error-text">
-              {warning}
-            </p>
-          ))}
-        </div>
-      ) : null}
-      {unsatisfied.length === 0 ? (
-        <p className="subtle">No soft constraints were violated or left unmet.</p>
-      ) : (
-        <details className="solve-diag-details" open>
-          <summary>Why objective is not higher</summary>
-          <ul className="solve-diag-list">
-            {unsatisfied.map((item, index) => (
-              <li key={`${item.constraint_type}-${item.employee_id}-${index}`}>
-                {describeUnsatisfied(item)}
-              </li>
+    <Paper variant="outlined" sx={{ p: 1.5 }}>
+      <Stack spacing={1.2}>
+        <Typography variant="h6" sx={{ fontWeight: 700 }}>
+          {t("solve.diagnosticsTitle", {}, "Solve Diagnostics")}
+        </Typography>
+        <Stack direction="row" spacing={0.8} flexWrap="wrap" useFlexGap>
+          <Chip
+            size="small"
+            label={t("solve.objectiveTotal", { value: total ?? "-" }, `Total objective: ${total ?? "-"}`)}
+          />
+          <Chip
+            size="small"
+            color="success"
+            label={t("solve.rewards", { value: reward }, `Rewards: +${reward}`)}
+          />
+          <Chip
+            size="small"
+            color="warning"
+            label={t("solve.penalties", { value: penalty }, `Penalties: ${penalty}`)}
+          />
+          <Chip
+            size="small"
+            color="default"
+            label={t(
+              "solve.unsatisfiedCount",
+              { count: unsatisfied.length },
+              `Unsatisfied soft constraints: ${unsatisfied.length}`
+            )}
+          />
+        </Stack>
+
+        {solveResult.applied_defaults?.length ? (
+          <Typography variant="body2" color="text.secondary">
+            {t(
+              "solve.defaultRules",
+              { rules: solveResult.applied_defaults.join(", ") },
+              `Default rules: ${solveResult.applied_defaults.join(", ")}`
+            )}
+          </Typography>
+        ) : null}
+        {solveResult.enabled_feature_toggles?.length ? (
+          <Typography variant="body2" color="text.secondary">
+            {t(
+              "solve.toggles",
+              { toggles: solveResult.enabled_feature_toggles.join(", ") },
+              `Enabled feature toggles: ${solveResult.enabled_feature_toggles.join(", ")}`
+            )}
+          </Typography>
+        ) : null}
+        {solveResult.warnings?.length ? (
+          <Stack spacing={0.8}>
+            {solveResult.warnings.map((warning, idx) => (
+              <Alert key={`${warning}-${idx}`} severity="warning" sx={{ py: 0 }}>
+                {warning}
+              </Alert>
             ))}
-          </ul>
-        </details>
-      )}
-    </section>
+          </Stack>
+        ) : null}
+        {unsatisfied.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            {t("solve.noUnsatisfied", {}, "No soft constraints were violated or left unmet.")}
+          </Typography>
+        ) : (
+          <Box>
+            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+              {t("solve.whyNotHigher", {}, "Why objective is not higher")}
+            </Typography>
+            <List dense sx={{ p: 0 }}>
+              {unsatisfied.map((item, index) => (
+                <ListItem key={`${item.constraint_type}-${item.employee_id}-${index}`} sx={{ py: 0.2 }}>
+                  <ListItemText
+                    primaryTypographyProps={{ variant: "body2" }}
+                    primary={describeUnsatisfied(item)}
+                  />
+                </ListItem>
+              ))}
+            </List>
+          </Box>
+        )}
+      </Stack>
+    </Paper>
   );
 }

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Box, Button, Chip, Paper, Stack, Typography } from "@mui/material";
 import { SHIFT_COLORS } from "../constants/schedule";
 
 const DAY_MINUTES = 24 * 60;
@@ -143,6 +144,7 @@ function buildConstraintStatsByEmployee({ employees, solvePayload, solveResult }
 }
 
 function PieChart({
+  t,
   title,
   items,
   valueKey,
@@ -151,7 +153,7 @@ function PieChart({
   activeEmployeeId,
   onSelectEmployee,
 }) {
-  const size = 156;
+  const size = 160;
   const radius = 52;
   const strokeWidth = 24;
   const circumference = 2 * Math.PI * radius;
@@ -188,82 +190,123 @@ function PieChart({
   }, [chartItems, total, circumference]);
 
   return (
-    <article className="solve-pie-card">
-      <h4>{title}</h4>
-      {total <= 0 ? (
-        <p className="subtle">No assigned data yet.</p>
-      ) : (
-        <div className="solve-pie-body">
-          <svg className="solve-pie-svg" viewBox={`0 0 ${size} ${size}`} role="img" aria-label={title}>
-            <circle
-              cx={size / 2}
-              cy={size / 2}
-              r={radius}
-              fill="none"
-              stroke="#e7efe9"
-              strokeWidth={strokeWidth}
-            />
-            <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
-              {segments.map((segment) => (
+    <Paper variant="outlined" sx={{ p: 1.2 }}>
+      <Stack spacing={1}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+          {title}
+        </Typography>
+        {total <= 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            {t("stats.noAssigned", {}, "No assigned data yet.")}
+          </Typography>
+        ) : (
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", sm: "160px minmax(0, 1fr)" },
+              gap: 1.2,
+              alignItems: "center",
+            }}
+          >
+            <Box sx={{ display: "grid", justifyItems: "center" }}>
+              <svg viewBox={`0 0 ${size} ${size}`} width={160} height={160} role="img" aria-label={title}>
                 <circle
-                  key={`${segment.employeeId}-${valueKey}`}
                   cx={size / 2}
                   cy={size / 2}
                   r={radius}
                   fill="none"
-                  stroke={segment.color}
+                  stroke="#8fa0be44"
                   strokeWidth={strokeWidth}
-                  strokeDasharray={`${segment.length} ${circumference}`}
-                  strokeDashoffset={-segment.offset}
-                  className={`solve-pie-segment${
-                    activeEmployeeId === segment.employeeId ? " active" : ""
-                  }`}
-                  onClick={() => onSelectEmployee(segment.employeeId)}
+                />
+                <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+                  {segments.map((segment) => (
+                    <circle
+                      key={`${segment.employeeId}-${valueKey}`}
+                      cx={size / 2}
+                      cy={size / 2}
+                      r={radius}
+                      fill="none"
+                      stroke={segment.color}
+                      strokeWidth={strokeWidth}
+                      strokeDasharray={`${segment.length} ${circumference}`}
+                      strokeDashoffset={-segment.offset}
+                      opacity={activeEmployeeId && activeEmployeeId !== segment.employeeId ? 0.45 : 1}
+                      style={{ cursor: "pointer" }}
+                      onClick={() => onSelectEmployee(segment.employeeId)}
+                    >
+                      <title>
+                        {segment.employeeName}: {formatValue(segment.value)} (
+                        {((segment.value / total) * 100).toFixed(1)}%)
+                      </title>
+                    </circle>
+                  ))}
+                </g>
+                <text
+                  x="50%"
+                  y="47%"
+                  textAnchor="middle"
+                  style={{ fontSize: 10, fill: "#8FA0BF", fontWeight: 600 }}
                 >
-                  <title>
-                    {segment.employeeName}: {formatValue(segment.value)} (
-                    {((segment.value / total) * 100).toFixed(1)}%)
-                  </title>
-                </circle>
-              ))}
-            </g>
-            <text x="50%" y="48%" textAnchor="middle" className="solve-pie-total">
-              Total
-            </text>
-            <text x="50%" y="58%" textAnchor="middle" className="solve-pie-total-value">
-              {formatTotal(total)}
-            </text>
-          </svg>
+                  {t("stats.total", {}, "Total")}
+                </text>
+                <text
+                  x="50%"
+                  y="59%"
+                  textAnchor="middle"
+                  style={{ fontSize: 11, fill: "#C9D1E6", fontWeight: 700 }}
+                >
+                  {formatTotal(total)}
+                </text>
+              </svg>
+            </Box>
 
-          <ul className="solve-pie-legend">
-            {chartItems.map((item) => {
-              const share = total <= 0 ? 0 : (item.value / total) * 100;
-              const isActive = activeEmployeeId === item.employeeId;
-              return (
-                <li key={`${item.employeeId}-${valueKey}`}>
-                  <button
-                    type="button"
-                    className={`solve-pie-legend-btn${isActive ? " active" : ""}`}
+            <Stack spacing={0.7} sx={{ maxHeight: 164, overflow: "auto" }}>
+              {chartItems.map((item) => {
+                const share = total <= 0 ? 0 : (item.value / total) * 100;
+                const isActive = activeEmployeeId === item.employeeId;
+                return (
+                  <Button
+                    key={`${item.employeeId}-${valueKey}`}
+                    variant={isActive ? "contained" : "outlined"}
+                    color={isActive ? "primary" : "inherit"}
+                    size="small"
                     onClick={() => onSelectEmployee(item.employeeId)}
-                    title={`${item.employeeName}: ${formatValue(item.value)} (${share.toFixed(1)}%)`}
+                    sx={{
+                      justifyContent: "space-between",
+                      textTransform: "none",
+                      gap: 1,
+                      minWidth: 0,
+                    }}
                   >
-                    <i className="solve-pie-dot" style={{ backgroundColor: item.color }} />
-                    <span className="solve-pie-name">{item.employeeName}</span>
-                    <span className="solve-pie-value">
+                    <Stack direction="row" spacing={0.7} alignItems="center" sx={{ minWidth: 0 }}>
+                      <Box
+                        sx={{
+                          width: 10,
+                          height: 10,
+                          borderRadius: "50%",
+                          backgroundColor: item.color,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Typography variant="caption" noWrap title={item.employeeName}>
+                        {item.employeeName}
+                      </Typography>
+                    </Stack>
+                    <Typography variant="caption" sx={{ whiteSpace: "nowrap", ml: 1 }}>
                       {formatValue(item.value)} ({share.toFixed(1)}%)
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-    </article>
+                    </Typography>
+                  </Button>
+                );
+              })}
+            </Stack>
+          </Box>
+        )}
+      </Stack>
+    </Paper>
   );
 }
 
-export default function SolveStats({ solveResult, employees, solvePayload }) {
+export default function SolveStats({ t, solveResult, employees, solvePayload }) {
   const [metric, setMetric] = useState("hours");
   const [sortDirection, setSortDirection] = useState("desc");
   const [activeEmployeeId, setActiveEmployeeId] = useState("");
@@ -349,6 +392,7 @@ export default function SolveStats({ solveResult, employees, solvePayload }) {
 
     return Object.values(byId);
   }, [employees, solvePayload, solveResult]);
+
   const statsWithColors = useMemo(
     () =>
       stats.map((entry, index) => ({
@@ -359,14 +403,8 @@ export default function SolveStats({ solveResult, employees, solvePayload }) {
     [stats]
   );
 
-  const maxHours = useMemo(
-    () => Math.max(1, ...stats.map((entry) => entry.totalHours)),
-    [stats]
-  );
-  const maxShifts = useMemo(
-    () => Math.max(1, ...stats.map((entry) => entry.shiftCount)),
-    [stats]
-  );
+  const maxHours = useMemo(() => Math.max(1, ...stats.map((entry) => entry.totalHours)), [stats]);
+  const maxShifts = useMemo(() => Math.max(1, ...stats.map((entry) => entry.shiftCount)), [stats]);
 
   const sortedStats = useMemo(() => {
     const key = metric === "hours" ? "totalHours" : "shiftCount";
@@ -382,183 +420,325 @@ export default function SolveStats({ solveResult, employees, solvePayload }) {
     sortedStats.find((entry) => entry.employeeId === activeEmployeeId) || null;
 
   return (
-    <section className="panel solve-stats">
-      <div className="solve-stats-head">
-        <h3>Employee Workload</h3>
-        <p className="subtle">Interactive breakdown of solved shifts and total scheduled hours.</p>
-      </div>
+    <Paper variant="outlined" sx={{ p: 1.5 }}>
+      <Stack spacing={1.5}>
+        <Box>
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>
+            {t("stats.title", {}, "Employee Workload")}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {t(
+              "stats.subtitle",
+              {},
+              "Interactive breakdown of solved shifts and total scheduled hours."
+            )}
+          </Typography>
+        </Box>
 
-      <div className="solve-stats-controls">
-        <div className="metric-toggle">
-          <button
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Button
             type="button"
-            className={`quiet mini-btn${metric === "hours" ? " active" : ""}`}
+            variant={metric === "hours" ? "contained" : "outlined"}
             onClick={() => setMetric("hours")}
           >
-            Sort by Hours
-          </button>
-          <button
+            {t("stats.sortHours", {}, "Sort by Hours")}
+          </Button>
+          <Button
             type="button"
-            className={`quiet mini-btn${metric === "shifts" ? " active" : ""}`}
+            variant={metric === "shifts" ? "contained" : "outlined"}
             onClick={() => setMetric("shifts")}
           >
-            Sort by Shifts
-          </button>
-        </div>
-        <button
-          type="button"
-          className="quiet mini-btn"
-          onClick={() =>
-            setSortDirection((prev) => (prev === "desc" ? "asc" : "desc"))
-          }
+            {t("stats.sortShifts", {}, "Sort by Shifts")}
+          </Button>
+          <Button
+            type="button"
+            variant="outlined"
+            onClick={() => setSortDirection((prev) => (prev === "desc" ? "asc" : "desc"))}
+          >
+            {sortDirection === "desc"
+              ? t("stats.highToLow", {}, "High to Low")
+              : t("stats.lowToHigh", {}, "Low to High")}
+          </Button>
+        </Stack>
+
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+            gap: 1.2,
+          }}
         >
-          {sortDirection === "desc" ? "High to Low" : "Low to High"}
-        </button>
-      </div>
+          <PieChart
+            t={t}
+            title={t("stats.constraintPie", {}, "Constraint Count Distribution")}
+            items={statsWithColors}
+            valueKey="constraintCount"
+            formatValue={(value) => `${Math.round(value)}`}
+            formatTotal={(value) => `${Math.round(value)}`}
+            activeEmployeeId={activeEmployeeId}
+            onSelectEmployee={setActiveEmployeeId}
+          />
+          <PieChart
+            t={t}
+            title={t("stats.shiftPie", {}, "Shift Count Distribution")}
+            items={statsWithColors}
+            valueKey="shiftCount"
+            formatValue={(value) => `${Math.round(value)}`}
+            formatTotal={(value) => `${Math.round(value)}`}
+            activeEmployeeId={activeEmployeeId}
+            onSelectEmployee={setActiveEmployeeId}
+          />
+          <PieChart
+            t={t}
+            title={t("stats.hoursPie", {}, "Worked Hours Distribution")}
+            items={statsWithColors}
+            valueKey="totalHours"
+            formatValue={(value) => `${value.toFixed(1)}h`}
+            formatTotal={(value) => `${value.toFixed(1)}h`}
+            activeEmployeeId={activeEmployeeId}
+            onSelectEmployee={setActiveEmployeeId}
+          />
+        </Box>
 
-      <div className="solve-pies">
-        <PieChart
-          title="Constraint Count Distribution"
-          items={statsWithColors}
-          valueKey="constraintCount"
-          formatValue={(value) => `${Math.round(value)}`}
-          formatTotal={(value) => `${Math.round(value)}`}
-          activeEmployeeId={activeEmployeeId}
-          onSelectEmployee={setActiveEmployeeId}
-        />
-        <PieChart
-          title="Shift Count Distribution"
-          items={statsWithColors}
-          valueKey="shiftCount"
-          formatValue={(value) => `${Math.round(value)}`}
-          formatTotal={(value) => `${Math.round(value)}`}
-          activeEmployeeId={activeEmployeeId}
-          onSelectEmployee={setActiveEmployeeId}
-        />
-        <PieChart
-          title="Worked Hours Distribution"
-          items={statsWithColors}
-          valueKey="totalHours"
-          formatValue={(value) => `${value.toFixed(1)}h`}
-          formatTotal={(value) => `${value.toFixed(1)}h`}
-          activeEmployeeId={activeEmployeeId}
-          onSelectEmployee={setActiveEmployeeId}
-        />
-      </div>
+        <Stack spacing={1}>
+          {sortedStats.map((entry) => {
+            const hoursPct = Math.max(4, (entry.totalHours / maxHours) * 100);
+            const shiftsPct = Math.max(4, (entry.shiftCount / maxShifts) * 100);
+            const isActive = activeEmployeeId === entry.employeeId;
+            const constraintCount = entry.hardTotal + entry.softTotal;
+            return (
+              <Paper
+                key={entry.employeeId}
+                variant="outlined"
+                sx={{
+                  p: 1.1,
+                  borderColor: isActive ? "primary.main" : "divider",
+                  backgroundColor: isActive ? "action.selected" : "background.paper",
+                }}
+              >
+                <Stack spacing={1}>
+                  <Button
+                    type="button"
+                    variant="text"
+                    color="inherit"
+                    onClick={() => setActiveEmployeeId(entry.employeeId)}
+                    sx={{ justifyContent: "space-between", textTransform: "none", px: 0 }}
+                  >
+                    <Typography variant="body2" sx={{ fontWeight: 700 }} noWrap title={entry.employeeName}>
+                      {entry.employeeName}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {entry.shiftCount} {t("stats.shifts", {}, "Shifts").toLowerCase()} |{" "}
+                      {entry.totalHours.toFixed(1)}h |{" "}
+                      {t("stats.constraints", { count: constraintCount }, `${constraintCount} constraints`)}
+                    </Typography>
+                  </Button>
 
-      <div className="solve-stats-list">
-        {sortedStats.map((entry) => {
-          const hoursPct = Math.max(4, (entry.totalHours / maxHours) * 100);
-          const shiftsPct = Math.max(4, (entry.shiftCount / maxShifts) * 100);
-          const isActive = activeEmployeeId === entry.employeeId;
-          return (
-            <button
-              key={entry.employeeId}
-              type="button"
-              className={`solve-stats-row${isActive ? " active" : ""}`}
-              onClick={() => setActiveEmployeeId(entry.employeeId)}
-              title={`${entry.employeeName}: ${entry.shiftCount} shifts, ${entry.totalHours.toFixed(
-                1
-              )}h, ${entry.hardTotal + entry.softTotal} constraints`}
-            >
-              <div className="solve-stats-row-head">
-                <strong>{entry.employeeName}</strong>
-                <span>
-                  {entry.shiftCount} shifts | {entry.totalHours.toFixed(1)}h |{" "}
-                  {entry.hardTotal + entry.softTotal} constraints
-                </span>
-              </div>
+                  <Box sx={{ display: "grid", gap: 0.8 }}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Typography variant="caption" sx={{ width: 48 }}>
+                        {t("stats.hours", {}, "Hours")}
+                      </Typography>
+                      <Box
+                        sx={{
+                          flex: 1,
+                          height: 10,
+                          borderRadius: 999,
+                          backgroundColor: "action.hover",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <Box
+                          sx={{
+                            height: "100%",
+                            width: `${hoursPct}%`,
+                            background: "linear-gradient(90deg, #2D8F6A 0%, #6EC59F 100%)",
+                          }}
+                        />
+                      </Box>
+                      <Typography variant="caption" sx={{ minWidth: 44 }}>
+                        {entry.totalHours.toFixed(1)}h
+                      </Typography>
+                    </Stack>
 
-              <div className="solve-stats-bars">
-                <div className={`solve-stats-bar${metric === "hours" ? " focus" : ""}`}>
-                  <span>Hours</span>
-                  <div className="solve-stats-track">
-                    <div className="solve-stats-fill hours" style={{ width: `${hoursPct}%` }} />
-                  </div>
-                  <b>{entry.totalHours.toFixed(1)}h</b>
-                </div>
-                <div className={`solve-stats-bar${metric === "shifts" ? " focus" : ""}`}>
-                  <span>Shifts</span>
-                  <div className="solve-stats-track">
-                    <div className="solve-stats-fill shifts" style={{ width: `${shiftsPct}%` }} />
-                  </div>
-                  <b>{entry.shiftCount}</b>
-                </div>
-              </div>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Typography variant="caption" sx={{ width: 48 }}>
+                        {t("stats.shifts", {}, "Shifts")}
+                      </Typography>
+                      <Box
+                        sx={{
+                          flex: 1,
+                          height: 10,
+                          borderRadius: 999,
+                          backgroundColor: "action.hover",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <Box
+                          sx={{
+                            height: "100%",
+                            width: `${shiftsPct}%`,
+                            background: "linear-gradient(90deg, #2F76BB 0%, #7FB0E0 100%)",
+                          }}
+                        />
+                      </Box>
+                      <Typography variant="caption" sx={{ minWidth: 44 }}>
+                        {entry.shiftCount}
+                      </Typography>
+                    </Stack>
+                  </Box>
 
-              <div className="solve-constraints-inline">
-                <span
-                  className={`solve-constraint-chip${entry.hardViolated > 0 ? " bad" : " good"}`}
+                  <Stack direction="row" spacing={0.8} flexWrap="wrap" useFlexGap>
+                    <Chip
+                      size="small"
+                      color={entry.hardViolated > 0 ? "error" : "success"}
+                      label={t(
+                        "stats.hard",
+                        { satisfied: entry.hardSatisfied, total: entry.hardTotal },
+                        `Hard ${entry.hardSatisfied}/${entry.hardTotal}`
+                      )}
+                    />
+                    <Chip
+                      size="small"
+                      color={entry.softViolated > 0 ? "warning" : "success"}
+                      label={t(
+                        "stats.soft",
+                        { satisfied: entry.softSatisfied, total: entry.softTotal },
+                        `Soft ${entry.softSatisfied}/${entry.softTotal}`
+                      )}
+                    />
+                  </Stack>
+                </Stack>
+              </Paper>
+            );
+          })}
+        </Stack>
+
+        {activeEntry ? (
+          <Paper variant="outlined" sx={{ p: 1.2 }}>
+            <Stack spacing={1}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                {t(
+                  "stats.constraintStats",
+                  { name: activeEntry.employeeName },
+                  `${activeEntry.employeeName} constraint statistics:`
+                )}
+              </Typography>
+              {activeEntry.hardTotal + activeEntry.softTotal === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  {t(
+                    "stats.noConstraintForEmployee",
+                    {},
+                    "No user hard/soft constraints configured for this employee."
+                  )}
+                </Typography>
+              ) : (
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
+                    gap: 1,
+                  }}
                 >
-                  Hard {entry.hardSatisfied}/{entry.hardTotal}
-                </span>
-                <span
-                  className={`solve-constraint-chip${entry.softViolated > 0 ? " warn" : " good"}`}
-                >
-                  Soft {entry.softSatisfied}/{entry.softTotal}
-                </span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+                  <Paper variant="outlined" sx={{ p: 1 }}>
+                    <Stack spacing={0.5}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                        {t("stats.hardConstraints", {}, "Hard constraints")}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {t(
+                          "stats.satisfied",
+                          { satisfied: activeEntry.hardSatisfied, total: activeEntry.hardTotal },
+                          `Satisfied ${activeEntry.hardSatisfied} / ${activeEntry.hardTotal}`
+                        )}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {t(
+                          "stats.requireMet",
+                          {
+                            satisfied: activeEntry.hardRequireSatisfied,
+                            total: activeEntry.hardRequire,
+                          },
+                          `Require met ${activeEntry.hardRequireSatisfied} / ${activeEntry.hardRequire}`
+                        )}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {t(
+                          "stats.forbidRespected",
+                          {
+                            satisfied: activeEntry.hardForbidSatisfied,
+                            total: activeEntry.hardForbid,
+                          },
+                          `Forbid respected ${activeEntry.hardForbidSatisfied} / ${activeEntry.hardForbid}`
+                        )}
+                      </Typography>
+                    </Stack>
+                  </Paper>
+                  <Paper variant="outlined" sx={{ p: 1 }}>
+                    <Stack spacing={0.5}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                        {t("stats.softConstraints", {}, "Soft constraints")}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {t(
+                          "stats.satisfied",
+                          { satisfied: activeEntry.softSatisfied, total: activeEntry.softTotal },
+                          `Satisfied ${activeEntry.softSatisfied} / ${activeEntry.softTotal}`
+                        )}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {t(
+                          "stats.preferredMet",
+                          {
+                            satisfied: activeEntry.softPreferSatisfied,
+                            total: activeEntry.softPrefer,
+                          },
+                          `Preferred met ${activeEntry.softPreferSatisfied} / ${activeEntry.softPrefer}`
+                        )}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {t(
+                          "stats.unpreferredRespected",
+                          {
+                            satisfied: activeEntry.softAvoidSatisfied,
+                            total: activeEntry.softAvoid,
+                          },
+                          `Unpreferred respected ${activeEntry.softAvoidSatisfied} / ${activeEntry.softAvoid}`
+                        )}
+                      </Typography>
+                    </Stack>
+                  </Paper>
+                </Box>
+              )}
 
-      {activeEntry ? (
-        <div className="solve-stats-detail">
-          <div className="solve-stats-constraints">
-            <p>
-              <strong>{activeEntry.employeeName}</strong> constraint statistics:
-            </p>
-            {activeEntry.hardTotal + activeEntry.softTotal === 0 ? (
-              <p className="subtle">No user hard/soft constraints configured for this employee.</p>
-            ) : (
-              <div className="solve-stats-constraints-grid">
-                <article className="solve-stats-constraint-card">
-                  <h4>Hard constraints</h4>
-                  <p>
-                    Satisfied {activeEntry.hardSatisfied} / {activeEntry.hardTotal}
-                  </p>
-                  <p>
-                    Require met {activeEntry.hardRequireSatisfied} / {activeEntry.hardRequire}
-                  </p>
-                  <p>
-                    Forbid respected {activeEntry.hardForbidSatisfied} / {activeEntry.hardForbid}
-                  </p>
-                </article>
-                <article className="solve-stats-constraint-card">
-                  <h4>Soft constraints</h4>
-                  <p>
-                    Satisfied {activeEntry.softSatisfied} / {activeEntry.softTotal}
-                  </p>
-                  <p>
-                    Preferred met {activeEntry.softPreferSatisfied} / {activeEntry.softPrefer}
-                  </p>
-                  <p>
-                    Unpreferred respected {activeEntry.softAvoidSatisfied} / {activeEntry.softAvoid}
-                  </p>
-                </article>
-              </div>
-            )}
-          </div>
-
-          <p>
-            <strong>{activeEntry.employeeName}</strong> assignments:
-          </p>
-          {activeEntry.shifts.length === 0 ? (
-            <p className="subtle">No assigned shifts.</p>
-          ) : (
-            <ul className="solve-stats-shifts">
-              {activeEntry.shifts.map((shift) => (
-                <li key={shift.id}>
-                  {shift.label} | {shift.range} | {shift.hours.toFixed(1)}h
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : (
-        <p className="subtle">Click an employee row to inspect assigned shifts.</p>
-      )}
-    </section>
+              <Typography variant="subtitle2" sx={{ mt: 0.5 }}>
+                {t(
+                  "stats.assignments",
+                  { name: activeEntry.employeeName },
+                  `${activeEntry.employeeName} assignments:`
+                )}
+              </Typography>
+              {activeEntry.shifts.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  {t("stats.noAssignments", {}, "No assigned shifts.")}
+                </Typography>
+              ) : (
+                <Stack component="ul" sx={{ m: 0, pl: 2, gap: 0.4 }}>
+                  {activeEntry.shifts.map((shift) => (
+                    <Typography component="li" key={shift.id} variant="body2" color="text.secondary">
+                      {shift.label} | {shift.range} | {shift.hours.toFixed(1)}h
+                    </Typography>
+                  ))}
+                </Stack>
+              )}
+            </Stack>
+          </Paper>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            {t("stats.inspectHint", {}, "Click an employee row to inspect assigned shifts.")}
+          </Typography>
+        )}
+      </Stack>
+    </Paper>
   );
 }
