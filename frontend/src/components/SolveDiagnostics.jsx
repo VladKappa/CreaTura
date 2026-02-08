@@ -62,6 +62,16 @@ export default function SolveDiagnostics({ solveResult }) {
               "Current hard constraints and required shift coverage cannot be satisfied together."}
           </p>
         </div>
+        {solveResult.infeasibility_reasons?.length ? (
+          <details className="solve-diag-details" open>
+            <summary>Likely infeasibility causes</summary>
+            <ul className="solve-diag-list">
+              {solveResult.infeasibility_reasons.map((reason, index) => (
+                <li key={`${reason}-${index}`}>{reason}</li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
         {solveResult.applied_defaults?.length ? (
           <p className="subtle">Default rules: {solveResult.applied_defaults.join(", ")}</p>
         ) : null}

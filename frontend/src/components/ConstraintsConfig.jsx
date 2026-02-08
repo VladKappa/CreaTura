@@ -52,9 +52,10 @@ export default function ConstraintsConfig({ config, onChange }) {
 
       <div className="constraint-config-item">
         <div>
-          <h4>Minimum Rest Gap</h4>
+          <h4>Minimum Rest Gap After Configured Max Worktime In A Row</h4>
           <p className="subtle">
-            Soft rule. Penalizes assignments where rest after a shift is below the configured hours.
+            Soft rule. Penalizes assignments where rest after a shift chain is below the configured
+            hours once the max worktime-in-a-row chain is reached.
           </p>
         </div>
         <label className="checkbox dense">
