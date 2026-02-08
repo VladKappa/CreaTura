@@ -6,6 +6,7 @@ import time
 from fastapi import HTTPException
 from ortools.sat.python import cp_model
 
+from .logging_utils import log_event
 from .models import HardConstraint, Shift, SoftConstraint, SolverRequest
 
 
@@ -260,52 +261,59 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
     min_rest_soft_hours = payload.feature_toggles.min_rest_after_shift_soft_hours
     min_rest_soft_weight = payload.feature_toggles.min_rest_after_shift_soft_weight
 
-    logger.info(
-        "[%s] solve start horizon_start=%s days=%d employees=%d shifts=%d hard=%d soft=%d "
-        "max_worktime_enabled=%s max_worktime_hours=%d "
-        "min_rest_hard_enabled=%s min_rest_hard_hours=%d "
-        "min_rest_soft_enabled=%s min_rest_soft_hours=%d min_rest_soft_weight=%d "
-        "balance_worked_hours=%s balance_span_multiplier=%.2f balance_weight=%d",
-        request_id,
-        payload.horizon.start,
-        payload.horizon.days,
-        len(payload.employees),
-        len(payload.shifts),
-        len(payload.constraints.hard),
-        len(payload.constraints.soft),
-        payload.feature_toggles.max_worktime_in_row_enabled,
-        payload.feature_toggles.max_worktime_in_row_hours,
-        min_rest_hard_enabled,
-        min_rest_hard_hours,
-        min_rest_soft_enabled,
-        min_rest_soft_hours,
-        min_rest_soft_weight,
-        payload.feature_toggles.balance_worked_hours,
-        payload.feature_toggles.balance_worked_hours_max_span_multiplier,
-        payload.feature_toggles.balance_worked_hours_weight,
+    log_event(
+        logger,
+        "INFO",
+        "solve.request.start",
+        request_id=request_id,
+        horizon_start=payload.horizon.start,
+        days=payload.horizon.days,
+        employees=len(payload.employees),
+        shifts=len(payload.shifts),
+        hard=len(payload.constraints.hard),
+        soft=len(payload.constraints.soft),
+        max_worktime_enabled=payload.feature_toggles.max_worktime_in_row_enabled,
+        max_worktime_hours=payload.feature_toggles.max_worktime_in_row_hours,
+        min_rest_hard_enabled=min_rest_hard_enabled,
+        min_rest_hard_hours=min_rest_hard_hours,
+        min_rest_soft_enabled=min_rest_soft_enabled,
+        min_rest_soft_hours=min_rest_soft_hours,
+        min_rest_soft_weight=min_rest_soft_weight,
+        balance_worked_hours=payload.feature_toggles.balance_worked_hours,
+        balance_span_multiplier=payload.feature_toggles.balance_worked_hours_max_span_multiplier,
+        balance_weight=payload.feature_toggles.balance_worked_hours_weight,
     )
 
     if not payload.employees:
-        logger.warning("[%s] solve rejected: no employees", request_id)
+        log_event(logger, "WARN", "solve.request.rejected", request_id=request_id, reason="no_employees")
         raise HTTPException(status_code=422, detail="At least one employee is required.")
     if not payload.shifts:
-        logger.warning("[%s] solve rejected: no shifts", request_id)
+        log_event(logger, "WARN", "solve.request.rejected", request_id=request_id, reason="no_shifts")
         raise HTTPException(status_code=422, detail="At least one shift is required.")
 
     employee_ids = [employee.id for employee in payload.employees]
     if len(set(employee_ids)) != len(employee_ids):
-        logger.warning("[%s] solve rejected: duplicate employee IDs", request_id)
+        log_event(
+            logger,
+            "WARN",
+            "solve.request.rejected",
+            request_id=request_id,
+            reason="duplicate_employee_ids",
+        )
         raise HTTPException(status_code=422, detail="Employee IDs must be unique.")
 
     for shift in payload.shifts:
         if shift.required > len(payload.employees):
-            logger.warning(
-                "[%s] solve rejected: shift '%s %s' required=%d > employees=%d",
-                request_id,
-                shift.date,
-                shift.type,
-                shift.required,
-                len(payload.employees),
+            log_event(
+                logger,
+                "WARN",
+                "solve.request.rejected",
+                request_id=request_id,
+                reason="required_exceeds_available_employees",
+                shift_date=shift.date,
+                shift_type=shift.type,
+                required=shift.required,
+                employees=len(payload.employees),
             )
             raise HTTPException(
                 status_code=422,
@@ -376,10 +384,13 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
     for hard in payload.constraints.hard:
         employee_idx = employee_idx_by_id.get(hard.employee_id)
         if employee_idx is None:
-            logger.warning(
-                "[%s] solve rejected: hard constraint unknown employee_id=%s",
-                request_id,
-                hard.employee_id,
+            log_event(
+                logger,
+                "WARN",
+                "solve.request.rejected",
+                request_id=request_id,
+                reason="hard_constraint_unknown_employee",
+                employee_id=hard.employee_id,
             )
             raise HTTPException(
                 status_code=422,
@@ -403,10 +414,13 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
     for soft in payload.constraints.soft:
         employee_idx = employee_idx_by_id.get(soft.employee_id)
         if employee_idx is None:
-            logger.warning(
-                "[%s] solve rejected: soft constraint unknown employee_id=%s",
-                request_id,
-                soft.employee_id,
+            log_event(
+                logger,
+                "WARN",
+                "solve.request.rejected",
+                request_id=request_id,
+                reason="soft_constraint_unknown_employee",
+                employee_id=soft.employee_id,
             )
             raise HTTPException(
                 status_code=422,
@@ -663,12 +677,15 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
             num_employees=num_employees,
             max_worktime_violating_windows=violating_windows,
         )
-        logger.info(
-            "[%s] solve done status=infeasible elapsed_ms=%.1f warnings=%d inferred_reasons=%d",
-            request_id,
-            elapsed_ms,
-            len(warnings),
-            len(infeasibility_reasons),
+        log_event(
+            logger,
+            "INFO",
+            "solve.request.done",
+            request_id=request_id,
+            status="infeasible",
+            elapsed_us=int(elapsed_ms * 1000),
+            warnings=len(warnings),
+            inferred_reasons=len(infeasibility_reasons),
         )
         return {
             "status": "infeasible",
@@ -785,17 +802,18 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
     elapsed_ms = (time.perf_counter() - started_at) * 1000.0
     total_assigned_slots = sum(len(assignment["assigned"]) for assignment in assignments)
     status_text = "optimal" if status == cp_model.OPTIMAL else "feasible"
-    logger.info(
-        "[%s] solve done status=%s elapsed_ms=%.1f objective=%d assigned_slots=%d warnings=%d "
-        "default_rules=%s feature_toggles=%s",
-        request_id,
-        status_text,
-        elapsed_ms,
-        int(solver.objective_value) if objective_term_refs else 0,
-        total_assigned_slots,
-        len(warnings),
-        ",".join(applied_default_rules) if applied_default_rules else "none",
-        ",".join(enabled_feature_toggles) if enabled_feature_toggles else "none",
+    log_event(
+        logger,
+        "INFO",
+        "solve.request.done",
+        request_id=request_id,
+        status=status_text,
+        elapsed_us=int(elapsed_ms * 1000),
+        objective=int(solver.objective_value) if objective_term_refs else 0,
+        assigned_slots=total_assigned_slots,
+        warnings=len(warnings),
+        default_rules=applied_default_rules,
+        feature_toggles=enabled_feature_toggles,
     )
 
     return {

@@ -3,6 +3,7 @@ import AutoFixHighOutlinedIcon from "@mui/icons-material/AutoFixHighOutlined";
 import DarkModeRoundedIcon from "@mui/icons-material/DarkModeRounded";
 import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
 import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined";
+import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import SettingsSuggestOutlinedIcon from "@mui/icons-material/SettingsSuggestOutlined";
 import ViewWeekOutlinedIcon from "@mui/icons-material/ViewWeekOutlined";
 import {
@@ -14,6 +15,7 @@ import {
   Container,
   CssBaseline,
   Dialog,
+  DialogActions,
   DialogContent,
   DialogTitle,
   Divider,
@@ -28,7 +30,7 @@ import {
   Typography,
   createTheme,
 } from "@mui/material";
-import { fetchScheduleState, saveScheduleState, solveSchedule } from "./api/scheduleApi";
+import { solveSchedule } from "./api/scheduleApi";
 import ConstraintsConfig from "./components/ConstraintsConfig";
 import EmployeeSidebar from "./components/EmployeeSidebar";
 import SolveDiagnostics from "./components/SolveDiagnostics";
@@ -52,7 +54,10 @@ import {
   buildInitialEmployees,
   cleanErrorText,
   hydratePersistedState,
+  loadBrowserWorkspace,
+  saveBrowserWorkspace,
 } from "./utils/persistedWorkspace";
+import { logError, logInfo, logWarn } from "./utils/logger";
 import { buildSolvePayload, makeShiftKey } from "./utils/solverPayload";
 
 function removeErrorKey(setter, key) {
@@ -76,6 +81,14 @@ function normalizeLanguage(value) {
   return SUPPORTED_LANGUAGES.some((item) => item.code === value) ? value : "en";
 }
 
+function normalizeFirstDayOfWeek(value) {
+  return value === "sun" ? "sun" : "mon";
+}
+
+function makeRequestId() {
+  return `${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
 export default function App() {
   const [newName, setNewName] = useState("");
   const [newRole, setNewRole] = useState("");
@@ -87,6 +100,7 @@ export default function App() {
   const [isEmployeePanelOpen, setIsEmployeePanelOpen] = useState(false);
   const [isTemplatePopupOpen, setIsTemplatePopupOpen] = useState(false);
   const [isConstraintsPopupOpen, setIsConstraintsPopupOpen] = useState(false);
+  const [isSettingsPopupOpen, setIsSettingsPopupOpen] = useState(false);
   const [isSolving, setIsSolving] = useState(false);
   const [solveResult, setSolveResult] = useState(null);
   const [lastSolvePayload, setLastSolvePayload] = useState(null);
@@ -97,6 +111,7 @@ export default function App() {
   const [persistError, setPersistError] = useState("");
   const [themeMode, setThemeMode] = useState("dark");
   const [language, setLanguage] = useState("en");
+  const [firstDayOfWeek, setFirstDayOfWeek] = useState("mon");
 
   const t = useCallback(
     (key, variables = {}, fallback = "") => translate(language, key, variables, fallback),
@@ -143,7 +158,7 @@ export default function App() {
     [themeMode]
   );
 
-  const week = useMemo(() => buildWeekFromToday(), []);
+  const week = useMemo(() => buildWeekFromToday(firstDayOfWeek), [firstDayOfWeek]);
   const selectedEmployee =
     employees.find((employee) => employee.id === selectedEmployeeId) || employees[0] || null;
   const solvedAssignments = useMemo(() => {
@@ -166,78 +181,82 @@ export default function App() {
       uiPreferences: {
         themeMode,
         language,
+        firstDayOfWeek,
       },
     }),
-    [employees, selectedEmployeeId, constraintsConfig, shiftClipboard, themeMode, language]
+    [
+      employees,
+      selectedEmployeeId,
+      constraintsConfig,
+      shiftClipboard,
+      themeMode,
+      language,
+      firstDayOfWeek,
+    ]
   );
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadPersistedState() {
-      try {
-        const payload = await fetchScheduleState();
-        if (cancelled) return;
-        const restored = hydratePersistedState(payload?.state);
-        if (payload?.exists && restored) {
-          setEmployees(restored.employees);
-          setSelectedEmployeeId(restored.selectedEmployeeId);
-          setConstraintsConfig(restored.constraintsConfig);
-          setShiftClipboard(restored.shiftClipboard);
-          setThemeMode(normalizeThemeMode(restored.uiPreferences?.themeMode));
-          setLanguage(normalizeLanguage(restored.uiPreferences?.language));
-          setPersistMessage(
-            payload?.updated_at
-              ? `Loaded saved workspace (${new Date(payload.updated_at).toLocaleString()})`
-              : "Loaded saved workspace."
-          );
-        } else {
-          setPersistMessage("No saved workspace yet. Changes will be auto-saved.");
-        }
-        setPersistError("");
-      } catch (err) {
-        if (cancelled) return;
-        setPersistError(cleanErrorText(err));
-        setPersistMessage("Workspace persistence unavailable.");
-      } finally {
-        if (!cancelled) setIsStateHydrating(false);
+    logInfo("workspace.load.start");
+    try {
+      const payload = loadBrowserWorkspace();
+      const restored = hydratePersistedState(payload);
+      if (restored) {
+        setEmployees(restored.employees);
+        setSelectedEmployeeId(restored.selectedEmployeeId);
+        setConstraintsConfig(restored.constraintsConfig);
+        setShiftClipboard(restored.shiftClipboard);
+        setThemeMode(normalizeThemeMode(restored.uiPreferences?.themeMode));
+        setLanguage(normalizeLanguage(restored.uiPreferences?.language));
+        setFirstDayOfWeek(normalizeFirstDayOfWeek(restored.uiPreferences?.firstDayOfWeek));
+        setPersistMessage("Loaded saved workspace from this browser.");
+        logInfo("workspace.load.done", {
+          source: "local_storage",
+          employees: restored.employees.length,
+          selected_employee_id: restored.selectedEmployeeId,
+        });
+      } else {
+        setPersistMessage("No saved browser workspace yet. Changes will be auto-saved locally.");
+        logInfo("workspace.load.empty", { source: "local_storage" });
       }
+      setPersistError("");
+    } catch (err) {
+      setPersistError(cleanErrorText(err));
+      setPersistMessage("Browser storage is unavailable.");
+      logError("workspace.load.failed", { error: cleanErrorText(err) });
+    } finally {
+      setIsStateHydrating(false);
     }
-
-    loadPersistedState();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   useEffect(() => {
     if (isStateHydrating) return;
 
-    const controller = new AbortController();
     const saveDelay = setTimeout(async () => {
       try {
         // Motivatie:
         // Salvam debounced intreg workspace-ul, nu pe campuri separate.
         // Asa evitam "partial writes" in timpul editarii rapide si
         // mentinem o singura versiune consistenta a starii din UI.
-        const payload = await saveScheduleState(persistedStatePayload, controller.signal);
-        if (controller.signal.aborted) return;
+        const payload = saveBrowserWorkspace(persistedStatePayload);
         const savedAt = payload?.updated_at
           ? new Date(payload.updated_at).toLocaleTimeString()
           : "just now";
-        setPersistMessage(`Saved at ${savedAt}`);
+        setPersistMessage(
+          t("app.persistence.savedLocal", { time: savedAt }, `Saved locally at ${savedAt}`)
+        );
         setPersistError("");
+        logInfo("workspace.save.done", { source: "local_storage", saved_at: payload?.updated_at });
       } catch (err) {
-        if (controller.signal.aborted) return;
-        setPersistError(cleanErrorText(err));
+        const errorText = cleanErrorText(err);
+        setPersistError(errorText);
+        logError("workspace.save.failed", { source: "local_storage", error: errorText });
       }
     }, 500);
 
     return () => {
       clearTimeout(saveDelay);
-      controller.abort();
     };
-  }, [isStateHydrating, persistedStatePayload]);
+  }, [isStateHydrating, persistedStatePayload, t]);
 
   useEffect(() => {
     setDefaultErrors({});
@@ -254,7 +273,7 @@ export default function App() {
     setSolveResult(null);
     setSolveError("");
     setLastSolvePayload(null);
-  }, [employees, selectedEmployeeId, constraintsConfig]);
+  }, [employees, selectedEmployeeId, constraintsConfig, firstDayOfWeek]);
 
   function updateEmployee(employeeId, updater) {
     setEmployees((prev) =>
@@ -346,24 +365,36 @@ export default function App() {
     return overrideErrors[day.iso] || "";
   }
 
+  function getWeekOrderIndex(day) {
+    if (!day) return -1;
+    if (typeof day.orderIndex === "number") return day.orderIndex;
+    return week.findIndex((candidate) => candidate.iso === day.iso);
+  }
+
   function getPreviousWeekDay(day) {
-    if (!day || day.dayIndex <= 0) return null;
-    return week[day.dayIndex - 1] || null;
+    const currentIndex = getWeekOrderIndex(day);
+    if (currentIndex <= 0) return null;
+    return week[currentIndex - 1] || null;
   }
 
   function getNextWeekDay(day) {
-    if (!day || day.dayIndex >= week.length - 1) return null;
-    return week[day.dayIndex + 1] || null;
+    const currentIndex = getWeekOrderIndex(day);
+    if (currentIndex < 0 || currentIndex >= week.length - 1) return null;
+    return week[currentIndex + 1] || null;
   }
 
   function getPreviousDefaultDayShifts(day) {
-    if (!selectedEmployee || day.dayIndex <= 0) return [];
-    return selectedEmployee.defaultShiftsByDay[day.dayIndex - 1] || [];
+    if (!selectedEmployee) return [];
+    const previousDay = getPreviousWeekDay(day);
+    if (!previousDay) return [];
+    return selectedEmployee.defaultShiftsByDay[previousDay.dayIndex] || [];
   }
 
   function getNextDefaultDayShifts(day) {
-    if (!selectedEmployee || day.dayIndex >= week.length - 1) return [];
-    return selectedEmployee.defaultShiftsByDay[day.dayIndex + 1] || [];
+    if (!selectedEmployee) return [];
+    const nextDay = getNextWeekDay(day);
+    if (!nextDay) return [];
+    return selectedEmployee.defaultShiftsByDay[nextDay.dayIndex] || [];
   }
 
   function getPreviousEffectiveDayShifts(day) {
@@ -625,25 +656,35 @@ export default function App() {
       constraintsConfig,
     });
     if (!payload) {
-      console.warn("No selected employee. Cannot build solve payload.");
+      logWarn("solve.request.skipped", { reason: "no_selected_employee" });
       return;
     }
 
-    console.log("Solve payload:");
-    console.log(JSON.stringify(payload, null, 2));
+    const requestId = makeRequestId();
+    logInfo("solve.request.start", {
+      request_id: requestId,
+      employees: payload.employees?.length || 0,
+      shifts: payload.shifts?.length || 0,
+      hard: payload.constraints?.hard?.length || 0,
+      soft: payload.constraints?.soft?.length || 0,
+    });
     setIsSolving(true);
     setSolveError("");
     setSolveResult(null);
     setLastSolvePayload(payload);
     try {
-      const result = await solveSchedule(payload);
+      const result = await solveSchedule(payload, { requestId });
       setSolveResult(result);
-      console.log("Solver response:");
-      console.log(JSON.stringify(result, null, 2));
+      logInfo("solve.request.done", {
+        request_id: requestId,
+        solver_status: result?.status || "unknown",
+        objective: result?.objective ?? null,
+        warnings: Array.isArray(result?.warnings) ? result.warnings.length : 0,
+      });
     } catch (err) {
       const text = String(err);
       setSolveError(text);
-      console.error("Solve request error:", err);
+      logError("solve.request.failed", { request_id: requestId, error: text });
     } finally {
       setIsSolving(false);
     }
@@ -772,6 +813,13 @@ export default function App() {
                 onClick={() => setIsConstraintsPopupOpen(true)}
               >
                 {t("app.constraintsConfig", {}, "Constraints Configure")}
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<SettingsOutlinedIcon />}
+                onClick={() => setIsSettingsPopupOpen(true)}
+              >
+                {t("app.settings", {}, "Settings")}
               </Button>
             </Stack>
           </Toolbar>
@@ -905,6 +953,47 @@ export default function App() {
           <DialogContent dividers>
             <ConstraintsConfig t={t} config={constraintsConfig} onChange={setConstraintsConfig} />
           </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={isSettingsPopupOpen}
+          onClose={() => setIsSettingsPopupOpen(false)}
+          maxWidth="xs"
+          fullWidth
+        >
+          <DialogTitle>{t("app.settingsDialogTitle", {}, "Settings")}</DialogTitle>
+          <DialogContent dividers>
+            <Stack spacing={1.2}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                {t("settings.firstDayOfWeek", {}, "First day of week")}
+              </Typography>
+              <ToggleButtonGroup
+                exclusive
+                size="small"
+                value={firstDayOfWeek}
+                onChange={(_, next) => {
+                  if (!next) return;
+                  const normalized = normalizeFirstDayOfWeek(next);
+                  setFirstDayOfWeek(normalized);
+                  logInfo("settings.first_day_of_week.changed", {
+                    value: normalized,
+                  });
+                }}
+              >
+                <ToggleButton value="mon">
+                  {t("settings.firstDay.mon", {}, "Monday")}
+                </ToggleButton>
+                <ToggleButton value="sun">
+                  {t("settings.firstDay.sun", {}, "Sunday")}
+                </ToggleButton>
+              </ToggleButtonGroup>
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setIsSettingsPopupOpen(false)}>
+              {t("common.close", {}, "Close")}
+            </Button>
+          </DialogActions>
         </Dialog>
       </Box>
     </ThemeProvider>

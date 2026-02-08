@@ -8,6 +8,8 @@ import {
   normalizeShiftConstraints,
 } from "./schedule";
 
+const WORKSPACE_STORAGE_KEY = "creatura_workspace_v2";
+
 export function cleanErrorText(err) {
   return String(err).replace(/^Error:\s*/, "");
 }
@@ -35,7 +37,8 @@ function normalizeLoadedShift(rawShift, shiftIndex) {
 
 export function hydratePersistedState(rawState) {
   // Motivatie:
-  // Datele din DB sunt "snapshot" JSON si pot proveni din versiuni mai vechi.
+  // Datele persistate (local browser storage) sunt "snapshot" JSON
+  // si pot proveni din versiuni mai vechi.
   // Hidratarea normalizeaza structura si aplica fallback-uri ca UI-ul sa ramana
   // functional chiar daca schema a evoluat intre deploy-uri.
   if (!rawState || typeof rawState !== "object") return null;
@@ -102,6 +105,7 @@ export function hydratePersistedState(rawState) {
   const uiPreferences = {
     themeMode: rawUiPrefs.themeMode === "light" ? "light" : "dark",
     language: rawUiPrefs.language === "ro" ? "ro" : "en",
+    firstDayOfWeek: rawUiPrefs.firstDayOfWeek === "sun" ? "sun" : "mon",
   };
 
   return {
@@ -111,4 +115,23 @@ export function hydratePersistedState(rawState) {
     shiftClipboard: clipboard,
     uiPreferences,
   };
+}
+
+export function loadBrowserWorkspace() {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  const raw = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function saveBrowserWorkspace(payload) {
+  if (typeof window === "undefined" || !window.localStorage) {
+    throw new Error("Local storage is unavailable in this environment.");
+  }
+  window.localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(payload));
+  return { updated_at: new Date().toISOString() };
 }

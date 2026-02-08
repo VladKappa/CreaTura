@@ -135,22 +135,29 @@ export function normalizeShiftConstraints(shift) {
   };
 }
 
-export function buildWeekFromToday() {
+export function buildWeekFromToday(firstDayOfWeek = "mon") {
   const today = new Date();
-  const day = today.getDay();
-  const mondayOffset = day === 0 ? -6 : 1 - day;
-  const monday = new Date(today);
-  monday.setDate(today.getDate() + mondayOffset);
+  const jsDay = today.getDay();
+  const startOffset = firstDayOfWeek === "sun" ? -jsDay : jsDay === 0 ? -6 : 1 - jsDay;
+  const startDate = new Date(today);
+  startDate.setDate(today.getDate() + startOffset);
 
-  return DAY_LABELS.map((label, index) => {
-    const date = new Date(monday);
-    date.setDate(monday.getDate() + index);
+  return Array.from({ length: DAY_LABELS.length }, (_, index) => {
+    const date = new Date(startDate);
+    date.setDate(startDate.getDate() + index);
+    const weekdayIndex = (date.getDay() + 6) % 7; // Mon=0 ... Sun=6
     const iso = date.toISOString().slice(0, 10);
     const dateText = date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
     });
-    return { label, dayIndex: index, iso, dateText };
+    return {
+      label: DAY_LABELS[weekdayIndex],
+      dayIndex: weekdayIndex,
+      orderIndex: index,
+      iso,
+      dateText,
+    };
   });
 }
 
@@ -172,31 +179,15 @@ export function makeEmployee(name, role) {
   };
 }
 
-function shiftIntervals(shift) {
-  const start = timeToMinutes(shift.start);
-  const end = timeToMinutes(shift.end);
-
-  if (end > start) {
-    return [[start, end]];
-  }
-  if (end < start) {
-    return [
-      [start, MINUTES_IN_DAY],
-      [0, end],
-    ];
-  }
-  return [[0, MINUTES_IN_DAY]];
-}
-
 function intervalsOverlap(left, right) {
   return left[0] < right[1] && right[0] < left[1];
 }
 
 export function hasShiftOverlap(shifts) {
   for (let i = 0; i < shifts.length; i += 1) {
-    const currentIntervals = shiftIntervals(shifts[i]);
+    const currentIntervals = currentDayIntervals(shifts[i]);
     for (let j = i + 1; j < shifts.length; j += 1) {
-      const nextIntervals = shiftIntervals(shifts[j]);
+      const nextIntervals = currentDayIntervals(shifts[j]);
       for (const left of currentIntervals) {
         for (const right of nextIntervals) {
           if (intervalsOverlap(left, right)) {
@@ -318,7 +309,7 @@ export function validateShiftSetWithCarryIn(
 function buildOccupiedMinutes(shifts) {
   const occupied = new Array(MINUTES_IN_DAY).fill(false);
   for (const shift of shifts) {
-    const intervals = shiftIntervals(shift);
+    const intervals = currentDayIntervals(shift);
     for (const [start, end] of intervals) {
       for (let minute = start; minute < end; minute += 1) {
         occupied[minute] = true;

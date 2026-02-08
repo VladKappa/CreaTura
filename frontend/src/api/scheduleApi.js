@@ -28,10 +28,14 @@ export async function saveScheduleState(payload, signal) {
   return resp.json();
 }
 
-export async function solveSchedule(payload) {
+export async function solveSchedule(payload, options = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (options.requestId) {
+    headers["X-Request-Id"] = String(options.requestId);
+  }
   const resp = await fetch(`${API_URL}/solve/schedule`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(payload),
   });
   if (!resp.ok) {
