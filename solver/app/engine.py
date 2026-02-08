@@ -1,337 +1,27 @@
-from collections import defaultdict
+from __future__ import annotations
+
 from datetime import date
-import json
-import math
 import time
 
-from fastapi import HTTPException
 from ortools.sat.python import cp_model
 
+from .engine_constraints import (
+    add_shift_coverage_constraints,
+    apply_balance_worked_hours_constraint,
+    apply_hard_constraints,
+    apply_max_worktime_constraints,
+    apply_min_rest_constraints,
+    apply_objective,
+    apply_user_soft_constraints,
+    build_assignment_variables,
+    collect_enabled_feature_toggles,
+)
+from .engine_diagnostics import infer_infeasibility_reasons
+from .engine_results import build_feasible_response, build_infeasible_response
+from .engine_utils import shift_duration_minutes, shift_start_abs_minutes
+from .engine_validation import validate_solver_request
 from .logging_utils import log_event
-from .models import HardConstraint, Shift, SoftConstraint, SolverRequest
-
-
-def shift_matches_rule(shift: Shift, rule: HardConstraint | SoftConstraint) -> bool:
-    if rule.date is not None and shift.date != rule.date:
-        return False
-    if rule.day is not None and shift.day != rule.day:
-        return False
-    if rule.shift_type is not None and shift.type != rule.shift_type:
-        return False
-    return True
-
-
-def find_matching_shift_ids(shifts: list[Shift], rule: HardConstraint | SoftConstraint) -> list[int]:
-    return [idx for idx, shift in enumerate(shifts) if shift_matches_rule(shift, rule)]
-
-
-def parse_minutes(value: str) -> int:
-    hours, minutes = value.split(":")
-    return int(hours) * 60 + int(minutes)
-
-
-def shift_duration_minutes(shift: Shift) -> int:
-    start = parse_minutes(shift.start)
-    end = parse_minutes(shift.end)
-    if end > start:
-        return end - start
-    if end < start:
-        return end + (24 * 60) - start
-    return 24 * 60
-
-
-def shift_start_abs_minutes(shift: Shift, horizon_start_ord: int) -> int:
-    day_offset = date.fromisoformat(shift.date).toordinal() - horizon_start_ord
-    return day_offset * 24 * 60 + parse_minutes(shift.start)
-
-
-def shift_end_abs_minutes(shift: Shift, horizon_start_ord: int) -> int:
-    return shift_start_abs_minutes(shift, horizon_start_ord) + shift_duration_minutes(shift)
-
-
-def shift_order_key(shift: Shift) -> tuple[int, int, str]:
-    return (date.fromisoformat(shift.date).toordinal(), parse_minutes(shift.start), shift.type)
-
-
-def shift_label(shift: Shift) -> str:
-    return f"{shift.day} {shift.date} {shift.type} ({shift.start}-{shift.end})"
-
-
-def build_minimal_qualifying_chain_by_left(
-    sorted_shift_indices: list[int],
-    shift_start_abs: list[int],
-    shift_end_abs: list[int],
-    shift_durations: list[int],
-    max_chain_minutes: int,
-) -> dict[int, list[int]]:
-    """
-    Returneaza pentru fiecare shift \"left\" (capat de lant) cel mai scurt lant
-    consecutiv (gap == 0) care atinge/depaseste pragul de worktime.
-
-    De ce e suficient lantul minim:
-    - orice lant mai lung care atinge pragul include acest lant minim;
-    - daca lantul minim nu este complet atribuit, niciun lant mai lung nu poate fi complet.
-    """
-    minimal_chain_by_left: dict[int, list[int]] = {}
-    for end_pos, end_shift_idx in enumerate(sorted_shift_indices):
-        running_minutes = shift_durations[end_shift_idx]
-        chain = [end_shift_idx]
-        if running_minutes >= max_chain_minutes:
-            minimal_chain_by_left[end_shift_idx] = chain.copy()
-            continue
-
-        for prev_pos in range(end_pos - 1, -1, -1):
-            prev_shift_idx = sorted_shift_indices[prev_pos]
-            next_shift_idx = sorted_shift_indices[prev_pos + 1]
-            gap_minutes = shift_start_abs[next_shift_idx] - shift_end_abs[prev_shift_idx]
-            if gap_minutes != 0:
-                break
-
-            chain.insert(0, prev_shift_idx)
-            running_minutes += shift_durations[prev_shift_idx]
-            if running_minutes >= max_chain_minutes:
-                minimal_chain_by_left[end_shift_idx] = chain.copy()
-                break
-
-    return minimal_chain_by_left
-
-
-def compute_max_worktime_violating_windows(
-    payload: SolverRequest,
-    shift_start_abs: list[int],
-    shift_end_abs: list[int],
-    shift_durations: list[int],
-) -> list[list[int]]:
-    max_worktime_minutes = payload.feature_toggles.max_worktime_in_row_hours * 60
-    num_shifts = len(payload.shifts)
-    sorted_shift_indices = sorted(range(num_shifts), key=lambda idx: shift_order_key(payload.shifts[idx]))
-    violating_windows: list[list[int]] = []
-
-    for start_pos, start_shift_idx in enumerate(sorted_shift_indices):
-        running_minutes = shift_durations[start_shift_idx]
-        window = [start_shift_idx]
-
-        for next_pos in range(start_pos + 1, len(sorted_shift_indices)):
-            prev_shift_idx = sorted_shift_indices[next_pos - 1]
-            next_shift_idx = sorted_shift_indices[next_pos]
-            gap_minutes = shift_start_abs[next_shift_idx] - shift_end_abs[prev_shift_idx]
-            if gap_minutes != 0:
-                break
-
-            window.append(next_shift_idx)
-            running_minutes += shift_durations[next_shift_idx]
-            if len(window) >= 2 and running_minutes > max_worktime_minutes:
-                violating_windows.append(window.copy())
-                # Primul \"prefix\" care depaseste pragul este suficient pentru
-                # acel start; orice fereastra mai lunga il contine si devine redundant.
-                break
-
-    # Dedupe ferestre duplicate rezultate din scanari diferite.
-    unique_windows: list[list[int]] = []
-    seen = set()
-    for window in violating_windows:
-        key = tuple(window)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique_windows.append(window)
-    return unique_windows
-
-
-def infer_infeasibility_reasons(
-    payload: SolverRequest,
-    num_employees: int,
-    max_worktime_violating_windows: list[list[int]],
-) -> list[dict]:
-    reasons: list[dict] = []
-    employee_name_by_id = {employee.id: employee.name for employee in payload.employees}
-
-    def shift_ref(shift: Shift) -> dict:
-        return {
-            "day": shift.day,
-            "date": shift.date,
-            "type": shift.type,
-            "start": shift.start,
-            "end": shift.end,
-        }
-
-    def add_reason(code: str, message: str, **data) -> None:
-        reasons.append(
-            {
-                "code": code,
-                "message": message,
-                **data,
-            }
-        )
-
-    hard_require_by_shift = [set() for _ in payload.shifts]
-    hard_forbid_by_shift = [set() for _ in payload.shifts]
-    hard_require_by_employee: dict[str, set[int]] = defaultdict(set)
-
-    for hard in payload.constraints.hard:
-        matching_shift_ids = find_matching_shift_ids(payload.shifts, hard)
-        for shift_idx in matching_shift_ids:
-            if hard.type == "require_shift":
-                hard_require_by_shift[shift_idx].add(hard.employee_id)
-                hard_require_by_employee[hard.employee_id].add(shift_idx)
-            elif hard.type == "forbid_shift":
-                hard_forbid_by_shift[shift_idx].add(hard.employee_id)
-
-    for shift_idx, shift in enumerate(payload.shifts):
-        required_ids = hard_require_by_shift[shift_idx]
-        forbidden_ids = hard_forbid_by_shift[shift_idx]
-        overlap = required_ids & forbidden_ids
-        if overlap:
-            overlap_names = ", ".join(
-                employee_name_by_id.get(employee_id, employee_id) for employee_id in sorted(overlap)
-            )
-            add_reason(
-                "hard_conflict_required_and_forbidden",
-                f"{shift_label(shift)}: same employee(s) are both required and forbidden ({overlap_names}).",
-                shift=shift_ref(shift),
-                employee_names=overlap_names,
-            )
-
-        if len(required_ids) > shift.required:
-            add_reason(
-                "hard_required_exceeds_shift_coverage",
-                f"{shift_label(shift)}: {len(required_ids)} hard-required employee(s) exceed required coverage {shift.required}.",
-                shift=shift_ref(shift),
-                hard_required_count=len(required_ids),
-                required_coverage=shift.required,
-            )
-
-        allowed_employees = num_employees - len(forbidden_ids)
-        if shift.required > allowed_employees:
-            add_reason(
-                "coverage_exceeds_available_after_forbids",
-                f"{shift_label(shift)}: required coverage {shift.required} exceeds available employees {allowed_employees} after forbids.",
-                shift=shift_ref(shift),
-                required_coverage=shift.required,
-                available_employees=allowed_employees,
-            )
-
-    if payload.feature_toggles.max_worktime_in_row_enabled:
-        for window in max_worktime_violating_windows:
-            window_required = sum(payload.shifts[shift_idx].required for shift_idx in window)
-            window_capacity = num_employees * (len(window) - 1)
-            if window_required > window_capacity:
-                window_preview = ", ".join(shift_label(payload.shifts[shift_idx]) for shift_idx in window[:3])
-                if len(window) > 3:
-                    window_preview += f", ... ({len(window)} shifts)"
-                add_reason(
-                    "max_worktime_window_capacity_conflict",
-                    f"Max-worktime window [{window_preview}] needs {window_required} assignments, but rule allows at most {window_capacity}.",
-                    window_preview=window_preview,
-                    required_assignments=window_required,
-                    allowed_assignments=window_capacity,
-                )
-
-            for employee in payload.employees:
-                required_count = sum(
-                    1 for shift_idx in window if shift_idx in hard_require_by_employee.get(employee.id, set())
-                )
-                if required_count > len(window) - 1:
-                    window_preview = ", ".join(
-                        shift_label(payload.shifts[shift_idx]) for shift_idx in window[:3]
-                    )
-                    if len(window) > 3:
-                        window_preview += f", ... ({len(window)} shifts)"
-                    add_reason(
-                        "max_worktime_window_employee_overrequired",
-                        f"{employee.name} is hard-required on {required_count} shifts inside max-worktime window [{window_preview}], exceeding allowed {len(window) - 1}.",
-                        employee_id=employee.id,
-                        employee_name=employee.name,
-                        hard_required_count=required_count,
-                        allowed_assignments=len(window) - 1,
-                        window_preview=window_preview,
-                    )
-
-    # Motivatie:
-    # Cand regula de repaus hard este activa, vrem un indiciu explicit daca
-    # infezabilitatea vine din "require" care forteaza un lant + o tura urmatoare
-    # cu pauza mai mica decat minimul configurat.
-    min_rest_hard_enabled = payload.feature_toggles.min_rest_after_shift_hard_enabled
-    if min_rest_hard_enabled:
-        min_rest_hard_hours = payload.feature_toggles.min_rest_after_shift_hard_hours
-        min_rest_hard_minutes = min_rest_hard_hours * 60
-        max_chain_for_rest_minutes = payload.feature_toggles.max_worktime_in_row_hours * 60
-        horizon_start_ord = date.fromisoformat(payload.horizon.start).toordinal()
-        shift_durations = [shift_duration_minutes(shift) for shift in payload.shifts]
-        shift_start_abs = [
-            shift_start_abs_minutes(shift, horizon_start_ord) for shift in payload.shifts
-        ]
-        shift_end_abs = [start + duration for start, duration in zip(shift_start_abs, shift_durations)]
-        sorted_shift_indices = sorted(
-            range(len(payload.shifts)),
-            key=lambda idx: shift_order_key(payload.shifts[idx]),
-        )
-
-        minimal_chain_by_left = build_minimal_qualifying_chain_by_left(
-            sorted_shift_indices=sorted_shift_indices,
-            shift_start_abs=shift_start_abs,
-            shift_end_abs=shift_end_abs,
-            shift_durations=shift_durations,
-            max_chain_minutes=max_chain_for_rest_minutes,
-        )
-
-        short_rest_by_left: dict[int, list[tuple[int, int]]] = defaultdict(list)
-        for left_shift_idx in range(len(payload.shifts)):
-            left_end = shift_end_abs[left_shift_idx]
-            for right_shift_idx in range(len(payload.shifts)):
-                if left_shift_idx == right_shift_idx:
-                    continue
-                rest_minutes = shift_start_abs[right_shift_idx] - left_end
-                if 0 <= rest_minutes < min_rest_hard_minutes:
-                    short_rest_by_left[left_shift_idx].append((right_shift_idx, rest_minutes))
-
-        for employee in payload.employees:
-            required_shift_ids = hard_require_by_employee.get(employee.id, set())
-            if not required_shift_ids:
-                continue
-
-            for left_shift_idx, minimal_chain in minimal_chain_by_left.items():
-                short_rest_targets = short_rest_by_left.get(left_shift_idx, [])
-                if not short_rest_targets:
-                    continue
-                forced_chain = all(shift_idx in required_shift_ids for shift_idx in minimal_chain)
-                if not forced_chain:
-                    continue
-
-                for right_shift_idx, rest_minutes in short_rest_targets:
-                    if right_shift_idx not in required_shift_ids:
-                        continue
-                    left_shift = payload.shifts[left_shift_idx]
-                    right_shift = payload.shifts[right_shift_idx]
-                    add_reason(
-                        "hard_min_rest_conflict_on_required_chain",
-                        f"{employee.name} is hard-required on {shift_label(left_shift)} and {shift_label(right_shift)} with only {rest_minutes / 60:.1f}h rest (< {min_rest_hard_hours}h hard minimum).",
-                        employee_id=employee.id,
-                        employee_name=employee.name,
-                        left_shift=shift_ref(left_shift),
-                        right_shift=shift_ref(right_shift),
-                        rest_hours=round(rest_minutes / 60, 1),
-                        min_rest_hours=min_rest_hard_hours,
-                    )
-
-    unique_reasons: list[dict] = []
-    seen = set()
-    for reason in reasons:
-        key = json.dumps(reason, sort_keys=True, ensure_ascii=True)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique_reasons.append(reason)
-
-    if unique_reasons:
-        return unique_reasons[:10]
-
-    return [
-        {
-            "code": "infeasibility_quick_analysis_inconclusive",
-            "message": "No direct contradiction was isolated by quick analysis; infeasibility is likely caused by the combined effect of hard constraints and required coverage.",
-        }
-    ]
+from .models import SolverRequest
 
 
 def solve_schedule_request(payload: SolverRequest, logger, request_id: str, started_at: float) -> dict:
@@ -364,43 +54,13 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
         balance_weight=payload.feature_toggles.balance_worked_hours_weight,
     )
 
-    if not payload.employees:
-        log_event(logger, "WARN", "solve.request.rejected", request_id=request_id, reason="no_employees")
-        raise HTTPException(status_code=422, detail="At least one employee is required.")
-    if not payload.shifts:
-        log_event(logger, "WARN", "solve.request.rejected", request_id=request_id, reason="no_shifts")
-        raise HTTPException(status_code=422, detail="At least one shift is required.")
+    # Etapa 1: validam datele de intrare inainte sa construim modelul.
+    # Daca aici avem problema (de ex. employee_id duplicat), iesim rapid
+    # cu eroare 422 ca sa nu "consumam" timp in solver.
+    validate_solver_request(payload=payload, logger=logger, request_id=request_id)
 
-    employee_ids = [employee.id for employee in payload.employees]
-    if len(set(employee_ids)) != len(employee_ids):
-        log_event(
-            logger,
-            "WARN",
-            "solve.request.rejected",
-            request_id=request_id,
-            reason="duplicate_employee_ids",
-        )
-        raise HTTPException(status_code=422, detail="Employee IDs must be unique.")
-
-    for shift in payload.shifts:
-        if shift.required > len(payload.employees):
-            log_event(
-                logger,
-                "WARN",
-                "solve.request.rejected",
-                request_id=request_id,
-                reason="required_exceeds_available_employees",
-                shift_date=shift.date,
-                shift_type=shift.type,
-                required=shift.required,
-                employees=len(payload.employees),
-            )
-            raise HTTPException(
-                status_code=422,
-                detail=f"Shift '{shift.date} {shift.type}' requires {shift.required} employees, "
-                f"but only {len(payload.employees)} are available.",
-            )
-
+    # Etapa 2: pregatim structuri numerice simple (indici + minute absolute)
+    # care sunt usor de folosit in CP-SAT pentru reguli de timp.
     employee_idx_by_id = {employee.id: idx for idx, employee in enumerate(payload.employees)}
     num_employees = len(payload.employees)
     num_shifts = len(payload.shifts)
@@ -410,325 +70,83 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
         shift_start_abs_minutes(shift, horizon_start_ord) for shift in payload.shifts
     ]
     shift_end_abs = [start + duration for start, duration in zip(shift_start_abs, shift_durations)]
-    min_hard_rest_minutes = min_rest_hard_hours * 60
-    min_soft_rest_minutes = min_rest_soft_hours * 60
-    short_rest_penalty_weight = min_rest_soft_weight
 
+    # Etapa 3: construim modelul CP-SAT.
+    # "assign[(e, s)] = 1" inseamna ca employee e este atribuit pe shift s.
     model = cp_model.CpModel()
-    assign: dict[tuple[int, int], cp_model.IntVar] = {}
-    for employee_idx in range(num_employees):
-        for shift_idx in range(num_shifts):
-            assign[(employee_idx, shift_idx)] = model.new_bool_var(f"a_e{employee_idx}_s{shift_idx}")
+    assign = build_assignment_variables(
+        model=model,
+        num_employees=num_employees,
+        num_shifts=num_shifts,
+    )
 
-    # Motivatie:
-    # Modelam acoperirea ca restrictie hard, nu ca obiectiv.
-    # Astfel, solverul cauta doar orare unde fiecare tura are exact
-    # numarul cerut de oameni, iar preferintele influenteaza doar
-    # alegerea dintre solutiile deja fezabile.
-    for shift_idx, shift in enumerate(payload.shifts):
-        model.add(
-            sum(assign[(employee_idx, shift_idx)] for employee_idx in range(num_employees))
-            == shift.required
-        )
+    add_shift_coverage_constraints(
+        model=model,
+        assign=assign,
+        payload=payload,
+        num_employees=num_employees,
+    )
 
-    # Motivatie:
-    # "Max worktime in a row" limiteaza doar LANTUL de ture consecutive.
-    # Un shift individual poate depasi pragul,
-    # dar nu permitem sa fie lipit de alte ture daca lantul rezultat
-    # depaseste limita configurata.
-    # Implementare: construim ferestre consecutive (gap 0) si penalizam
-    # doar ferestrele cu cel putin 2 ture care depasesc pragul.
-    violating_windows: list[list[int]] = []
-    if payload.feature_toggles.max_worktime_in_row_enabled:
-        violating_windows = compute_max_worktime_violating_windows(
-            payload,
-            shift_start_abs,
-            shift_end_abs,
-            shift_durations,
-        )
-
-        for employee_idx in range(num_employees):
-            for window in violating_windows:
-                model.add(sum(assign[(employee_idx, shift_idx)] for shift_idx in window) <= len(window) - 1)
+    violating_windows = apply_max_worktime_constraints(
+        payload=payload,
+        model=model,
+        assign=assign,
+        num_employees=num_employees,
+        shift_start_abs=shift_start_abs,
+        shift_end_abs=shift_end_abs,
+        shift_durations=shift_durations,
+    )
 
     warnings: list[dict] = []
-    enabled_feature_toggles: list[str] = []
-    if payload.feature_toggles.max_worktime_in_row_enabled:
-        enabled_feature_toggles.append("max_worktime_in_row")
-    if min_rest_hard_enabled:
-        enabled_feature_toggles.append("min_rest_after_shift_hard")
-    if min_rest_soft_enabled:
-        enabled_feature_toggles.append("min_rest_after_shift_soft")
+    enabled_feature_toggles = collect_enabled_feature_toggles(payload)
+    objective_term_refs = []
 
-    for hard in payload.constraints.hard:
-        employee_idx = employee_idx_by_id.get(hard.employee_id)
-        if employee_idx is None:
-            log_event(
-                logger,
-                "WARN",
-                "solve.request.rejected",
-                request_id=request_id,
-                reason="hard_constraint_unknown_employee",
-                employee_id=hard.employee_id,
-            )
-            raise HTTPException(
-                status_code=422,
-                detail=f"Hard constraint references unknown employee_id '{hard.employee_id}'.",
-            )
+    apply_hard_constraints(
+        payload=payload,
+        model=model,
+        assign=assign,
+        employee_idx_by_id=employee_idx_by_id,
+        warnings=warnings,
+        logger=logger,
+        request_id=request_id,
+    )
 
-        matching_shift_ids = find_matching_shift_ids(payload.shifts, hard)
-        if not matching_shift_ids:
-            warnings.append(
-                {
-                    "code": "no_matching_shift_for_hard_constraint",
-                    "constraint_type": hard.type,
-                    "employee_id": hard.employee_id,
-                }
-            )
-            continue
+    apply_user_soft_constraints(
+        payload=payload,
+        assign=assign,
+        employee_idx_by_id=employee_idx_by_id,
+        objective_term_refs=objective_term_refs,
+        warnings=warnings,
+        logger=logger,
+        request_id=request_id,
+    )
 
-        for shift_idx in matching_shift_ids:
-            if hard.type == "forbid_shift":
-                model.add(assign[(employee_idx, shift_idx)] == 0)
-            elif hard.type == "require_shift":
-                model.add(assign[(employee_idx, shift_idx)] == 1)
+    apply_min_rest_constraints(
+        payload=payload,
+        model=model,
+        assign=assign,
+        num_employees=num_employees,
+        num_shifts=num_shifts,
+        shift_start_abs=shift_start_abs,
+        shift_end_abs=shift_end_abs,
+        shift_durations=shift_durations,
+        objective_term_refs=objective_term_refs,
+    )
 
-    objective_term_refs: list[dict] = []
-    for soft in payload.constraints.soft:
-        employee_idx = employee_idx_by_id.get(soft.employee_id)
-        if employee_idx is None:
-            log_event(
-                logger,
-                "WARN",
-                "solve.request.rejected",
-                request_id=request_id,
-                reason="soft_constraint_unknown_employee",
-                employee_id=soft.employee_id,
-            )
-            raise HTTPException(
-                status_code=422,
-                detail=f"Soft constraint references unknown employee_id '{soft.employee_id}'.",
-            )
+    balance_context = apply_balance_worked_hours_constraint(
+        payload=payload,
+        model=model,
+        assign=assign,
+        num_employees=num_employees,
+        num_shifts=num_shifts,
+        shift_durations=shift_durations,
+        objective_term_refs=objective_term_refs,
+    )
 
-        matching_shift_ids = find_matching_shift_ids(payload.shifts, soft)
-        if not matching_shift_ids:
-            warnings.append(
-                {
-                    "code": "no_matching_shift_for_soft_constraint",
-                    "constraint_type": soft.type,
-                    "employee_id": soft.employee_id,
-                }
-            )
-            continue
+    apply_objective(model=model, objective_term_refs=objective_term_refs)
 
-        for shift_idx in matching_shift_ids:
-            shift = payload.shifts[shift_idx]
-            shift_meta = {
-                "day": shift.day,
-                "date": shift.date,
-                "type": shift.type,
-                "start": shift.start,
-                "end": shift.end,
-            }
-            if soft.type == "prefer_assignment":
-                objective_term_refs.append(
-                    {
-                        "var": assign[(employee_idx, shift_idx)],
-                        "coefficient": soft.weight,
-                        "source": "user_soft_constraint",
-                        "constraint_type": soft.type,
-                        "employee_id": payload.employees[employee_idx].id,
-                        "employee_name": payload.employees[employee_idx].name,
-                        "weight": soft.weight,
-                        "shift": shift_meta,
-                    }
-                )
-            elif soft.type == "avoid_assignment":
-                objective_term_refs.append(
-                    {
-                        "var": assign[(employee_idx, shift_idx)],
-                        "coefficient": -soft.weight,
-                        "source": "user_soft_constraint",
-                        "constraint_type": soft.type,
-                        "employee_id": payload.employees[employee_idx].id,
-                        "employee_name": payload.employees[employee_idx].name,
-                        "weight": soft.weight,
-                        "shift": shift_meta,
-                    }
-                )
-
-    # Motivatie:
-    # Regulile de "minimum rest gap" se aplica doar dupa ce un angajat a atins
-    # pragul de "max worktime in a row" pe lantul curent de ture consecutive.
-    # Avem doua variante:
-    # - hard: combinatia devine interzisa;
-    # - soft: combinatia e permisa, dar penalizata in obiectiv.
-    if min_rest_hard_enabled or min_rest_soft_enabled:
-        max_chain_for_rest_minutes = payload.feature_toggles.max_worktime_in_row_hours * 60
-        sorted_shift_indices = sorted(range(num_shifts), key=lambda idx: shift_order_key(payload.shifts[idx]))
-
-        # Pentru fiecare tura "left", retinem doar lantul minim care atinge pragul.
-        # Versiunea anterioara construia toate lanturile valide, ceea ce producea
-        # multe variabile/constraint-uri redundante in model.
-        minimal_chain_by_left = build_minimal_qualifying_chain_by_left(
-            sorted_shift_indices=sorted_shift_indices,
-            shift_start_abs=shift_start_abs,
-            shift_end_abs=shift_end_abs,
-            shift_durations=shift_durations,
-            max_chain_minutes=max_chain_for_rest_minutes,
-        )
-
-        hard_short_rest_pairs = []
-        soft_short_rest_pairs = []
-        for left_shift_idx in range(num_shifts):
-            left_end = shift_end_abs[left_shift_idx]
-            for right_shift_idx in range(num_shifts):
-                if left_shift_idx == right_shift_idx:
-                    continue
-                right_start = shift_start_abs[right_shift_idx]
-                rest_minutes = right_start - left_end
-                if rest_minutes < 0:
-                    continue
-                if min_rest_hard_enabled and rest_minutes < min_hard_rest_minutes:
-                    hard_short_rest_pairs.append((left_shift_idx, right_shift_idx, rest_minutes))
-                if min_rest_soft_enabled and rest_minutes < min_soft_rest_minutes:
-                    soft_short_rest_pairs.append((left_shift_idx, right_shift_idx, rest_minutes))
-
-        for employee_idx in range(num_employees):
-            reached_max_chain_by_left: dict[int, cp_model.IntVar] = {}
-            for left_shift_idx, minimal_chain in minimal_chain_by_left.items():
-                reached_max_chain = model.new_bool_var(
-                    f"max_chain_reached_e{employee_idx}_left{left_shift_idx}"
-                )
-                for shift_idx in minimal_chain:
-                    model.add(reached_max_chain <= assign[(employee_idx, shift_idx)])
-                model.add(
-                    reached_max_chain
-                    >= sum(assign[(employee_idx, shift_idx)] for shift_idx in minimal_chain)
-                    - len(minimal_chain)
-                    + 1
-                )
-                reached_max_chain_by_left[left_shift_idx] = reached_max_chain
-
-            # Hard minimum rest: daca lantul a atins pragul, urmatoarea tura
-            # cu pauza insuficienta devine interzisa.
-            for left_shift_idx, right_shift_idx, _ in hard_short_rest_pairs:
-                reached_max_chain = reached_max_chain_by_left.get(left_shift_idx)
-                if reached_max_chain is None:
-                    continue
-                model.add(reached_max_chain + assign[(employee_idx, right_shift_idx)] <= 1)
-
-            # Soft minimum rest: pastram aceeasi logica, dar cu penalizare.
-            for left_shift_idx, right_shift_idx, rest_minutes in soft_short_rest_pairs:
-                reached_max_chain = reached_max_chain_by_left.get(left_shift_idx)
-                if reached_max_chain is None:
-                    continue
-
-                short_rest_after_max_chain = model.new_bool_var(
-                    f"short_rest_after_max_e{employee_idx}_s{left_shift_idx}_s{right_shift_idx}"
-                )
-                model.add(short_rest_after_max_chain <= reached_max_chain)
-                model.add(short_rest_after_max_chain <= assign[(employee_idx, right_shift_idx)])
-                model.add(
-                    short_rest_after_max_chain
-                    >= reached_max_chain + assign[(employee_idx, right_shift_idx)] - 1
-                )
-
-                left_shift = payload.shifts[left_shift_idx]
-                right_shift = payload.shifts[right_shift_idx]
-                objective_term_refs.append(
-                    {
-                        "var": short_rest_after_max_chain,
-                        "coefficient": -short_rest_penalty_weight,
-                        "source": "feature_toggle",
-                        "constraint_type": "min_rest_after_shift",
-                        "employee_id": payload.employees[employee_idx].id,
-                        "employee_name": payload.employees[employee_idx].name,
-                        "weight": short_rest_penalty_weight,
-                        "rest_minutes": rest_minutes,
-                        "required_rest_minutes": min_soft_rest_minutes,
-                        "left_shift": {
-                            "day": left_shift.day,
-                            "date": left_shift.date,
-                            "type": left_shift.type,
-                            "start": left_shift.start,
-                            "end": left_shift.end,
-                        },
-                        "right_shift": {
-                            "day": right_shift.day,
-                            "date": right_shift.date,
-                            "type": right_shift.type,
-                            "start": right_shift.start,
-                            "end": right_shift.end,
-                        },
-                    }
-                )
-
-    balance_hours_span_var = None
-    balance_min_hours_var = None
-    balance_max_hours_var = None
-    balance_allowed_span_hours = None
-    balance_average_shift_duration_minutes = None
-    if payload.feature_toggles.balance_worked_hours:
-        enabled_feature_toggles.append("balance_worked_hours")
-        total_shift_minutes = sum(shift_durations)
-        max_hours_upper = max(1, (total_shift_minutes + 59) // 60)
-
-        employee_work_hours = []
-        for employee_idx in range(num_employees):
-            work_minutes = model.new_int_var(0, total_shift_minutes, f"work_minutes_e{employee_idx}")
-            model.add(
-                work_minutes
-                == sum(
-                    shift_durations[shift_idx] * assign[(employee_idx, shift_idx)]
-                    for shift_idx in range(num_shifts)
-                )
-            )
-
-            work_hours = model.new_int_var(0, max_hours_upper, f"work_hours_e{employee_idx}")
-            model.add_division_equality(work_hours, work_minutes, 60)
-            employee_work_hours.append(work_hours)
-
-        balance_min_hours_var = model.new_int_var(0, max_hours_upper, "min_work_hours")
-        balance_max_hours_var = model.new_int_var(0, max_hours_upper, "max_work_hours")
-        model.add_min_equality(balance_min_hours_var, employee_work_hours)
-        model.add_max_equality(balance_max_hours_var, employee_work_hours)
-
-        balance_hours_span_var = model.new_int_var(0, max_hours_upper, "worked_hours_span")
-        model.add(balance_hours_span_var == balance_max_hours_var - balance_min_hours_var)
-
-        balance_average_shift_duration_minutes = total_shift_minutes / max(1, len(shift_durations))
-        balance_allowed_span_hours = math.ceil(
-            (
-                balance_average_shift_duration_minutes
-                * payload.feature_toggles.balance_worked_hours_max_span_multiplier
-            )
-            / 60
-        )
-        balance_allowed_span_hours = min(balance_allowed_span_hours, max_hours_upper)
-
-        balance_excess_span_hours = model.new_int_var(0, max_hours_upper, "worked_hours_span_excess")
-        model.add(balance_excess_span_hours >= balance_hours_span_var - balance_allowed_span_hours)
-        model.add(balance_excess_span_hours >= 0)
-
-        objective_term_refs.append(
-            {
-                "var": balance_excess_span_hours,
-                "coefficient": -payload.feature_toggles.balance_worked_hours_weight,
-                "source": "feature_toggle",
-                "constraint_type": "balance_worked_hours",
-                "employee_id": "all",
-                "employee_name": "All employees",
-                "weight": payload.feature_toggles.balance_worked_hours_weight,
-                "allowed_span_hours": balance_allowed_span_hours,
-                "span_multiplier": payload.feature_toggles.balance_worked_hours_max_span_multiplier,
-                "average_shift_duration_minutes": balance_average_shift_duration_minutes,
-            }
-        )
-
-    if objective_term_refs:
-        model.maximize(sum(ref["coefficient"] * ref["var"] for ref in objective_term_refs))
-
+    # Etapa 4: rulam solverul si construim raspunsul API
+    # (infezabil / fezabil + diagnostice).
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 10.0
     solver.parameters.num_search_workers = 8
@@ -751,146 +169,34 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
             warnings=len(warnings),
             inferred_reasons=len(infeasibility_reasons),
         )
-        return {
-            "status": "infeasible",
-            "reason_code": "infeasible_no_feasible_assignment",
-            "reason": "No feasible assignment satisfies current hard constraints and coverage.",
-            "infeasibility_reasons": infeasibility_reasons,
-            "warnings": warnings,
-            "objective": None,
-            "assignments": [],
-            "employee_load": [],
-            "enabled_feature_toggles": enabled_feature_toggles,
-            "objective_breakdown": {
-                "reward_points": 0,
-                "penalty_points": 0,
-                "unsatisfied_count": 0,
-                "items": [],
-            },
-            "unsatisfied_soft_constraints": [],
-        }
-
-    assignments = []
-    employee_load_counter = defaultdict(int)
-
-    for shift_idx, shift in enumerate(payload.shifts):
-        assigned = []
-        for employee_idx, employee in enumerate(payload.employees):
-            if solver.value(assign[(employee_idx, shift_idx)]) == 1:
-                assigned.append({"employee_id": employee.id, "employee_name": employee.name})
-                employee_load_counter[employee.id] += 1
-
-        assignments.append(
-            {
-                "day": shift.day,
-                "date": shift.date,
-                "type": shift.type,
-                "start": shift.start,
-                "end": shift.end,
-                "required": shift.required,
-                "assigned": assigned,
-            }
+        return build_infeasible_response(
+            warnings=warnings,
+            enabled_feature_toggles=enabled_feature_toggles,
+            infeasibility_reasons=infeasibility_reasons,
         )
 
-    employee_load = [
-        {
-            "employee_id": employee.id,
-            "employee_name": employee.name,
-            "assigned_count": employee_load_counter[employee.id],
-        }
-        for employee in payload.employees
-    ]
-
-    # Motivatie:
-    # Returnam breakdown-ul obiectivului pentru a explica "de ce"
-    # solutia are scorul curent. UI poate arata explicit ce reguli
-    # soft au ramas nesatisfacute si ce impact au avut in punctaj.
-    objective_items = []
-    unsatisfied_soft_constraints = []
-    reward_points = 0
-    penalty_points = 0
-
-    for ref in objective_term_refs:
-        var_value = int(solver.value(ref["var"]))
-        active = var_value > 0
-        contribution = int(ref["coefficient"]) * var_value
-        reward_points += max(0, contribution)
-        penalty_points += min(0, contribution)
-
-        constraint_type = ref["constraint_type"]
-        if constraint_type == "prefer_assignment":
-            status_label = "satisfied" if active else "unmet"
-        elif constraint_type == "balance_worked_hours":
-            status_label = "within_allowed_span" if not active else "over_allowed_span"
-        else:
-            status_label = "violated" if active else "satisfied"
-
-        item = {
-            "source": ref["source"],
-            "constraint_type": constraint_type,
-            "employee_id": ref["employee_id"],
-            "employee_name": ref["employee_name"],
-            "weight": ref["weight"],
-            "status": status_label,
-            "contribution": contribution,
-            "active": active,
-            "value": var_value,
-        }
-        if "shift" in ref:
-            item["shift"] = ref["shift"]
-        if "left_shift" in ref:
-            item["left_shift"] = ref["left_shift"]
-        if "right_shift" in ref:
-            item["right_shift"] = ref["right_shift"]
-        if "rest_minutes" in ref:
-            item["rest_minutes"] = ref["rest_minutes"]
-        if "required_rest_minutes" in ref:
-            item["required_rest_minutes"] = ref["required_rest_minutes"]
-        if constraint_type == "balance_worked_hours":
-            item["excess_hours"] = var_value
-            if balance_min_hours_var is not None:
-                item["min_employee_hours"] = int(solver.value(balance_min_hours_var))
-            if balance_max_hours_var is not None:
-                item["max_employee_hours"] = int(solver.value(balance_max_hours_var))
-            if balance_hours_span_var is not None:
-                item["hours_span"] = int(solver.value(balance_hours_span_var))
-            if balance_allowed_span_hours is not None:
-                item["allowed_span_hours"] = balance_allowed_span_hours
-            if balance_average_shift_duration_minutes is not None:
-                item["average_shift_duration_minutes"] = balance_average_shift_duration_minutes
-
-        objective_items.append(item)
-        if status_label in ("unmet", "violated", "over_allowed_span"):
-            unsatisfied_soft_constraints.append(item)
+    response, total_assigned_slots = build_feasible_response(
+        payload=payload,
+        solver=solver,
+        assign=assign,
+        status=status,
+        warnings=warnings,
+        enabled_feature_toggles=enabled_feature_toggles,
+        objective_term_refs=objective_term_refs,
+        balance_context=balance_context,
+    )
 
     elapsed_ms = (time.perf_counter() - started_at) * 1000.0
-    total_assigned_slots = sum(len(assignment["assigned"]) for assignment in assignments)
-    status_text = "optimal" if status == cp_model.OPTIMAL else "feasible"
     log_event(
         logger,
         "INFO",
         "solve.request.done",
         request_id=request_id,
-        status=status_text,
+        status=response["status"],
         elapsed_us=int(elapsed_ms * 1000),
-        objective=int(solver.objective_value) if objective_term_refs else 0,
+        objective=response["objective"],
         assigned_slots=total_assigned_slots,
         warnings=len(warnings),
         feature_toggles=enabled_feature_toggles,
     )
-
-    return {
-        "status": status_text,
-        "objective": int(solver.objective_value) if objective_term_refs else 0,
-        "warnings": warnings,
-        "assignments": assignments,
-        "employee_load": employee_load,
-        "enabled_feature_toggles": enabled_feature_toggles,
-        "objective_breakdown": {
-            "reward_points": reward_points,
-            "penalty_points": penalty_points,
-            "unsatisfied_count": len(unsatisfied_soft_constraints),
-            "items": objective_items,
-        },
-        "unsatisfied_soft_constraints": unsatisfied_soft_constraints,
-    }
+    return response
