@@ -2,6 +2,8 @@
 
 # CreaTura - Employee Scheduling App (Dockerized)
 
+![overview](https://github.com/user-attachments/assets/cbbf8878-0731-45d0-afe3-113fea00ca70)
+
 ## What This App Does
 
 `CreaTura` is a 3-layer employee scheduling system:
