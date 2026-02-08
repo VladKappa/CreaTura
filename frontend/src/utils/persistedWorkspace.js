@@ -24,19 +24,12 @@ export function buildInitialEmployees() {
 function normalizeLoadedShift(rawShift, shiftIndex) {
   const safeShift = rawShift && typeof rawShift === "object" ? rawShift : {};
   const rawName = typeof safeShift.name === "string" ? safeShift.name : "";
-  const normalizedLegacyName =
-    rawName === "Morning" || rawName === "Evening" || rawName === "Night"
-      ? defaultShiftName(shiftIndex)
-      : rawName;
   return normalizeShiftConstraints({
     id: typeof safeShift.id === "string" && safeShift.id ? safeShift.id : nextShiftId(),
     start: typeof safeShift.start === "string" ? safeShift.start : "09:00",
     end: typeof safeShift.end === "string" ? safeShift.end : "17:00",
-    name: normalizedLegacyName || defaultShiftName(shiftIndex),
+    name: rawName || defaultShiftName(shiftIndex),
     constraints: Array.isArray(safeShift.constraints) ? safeShift.constraints : [],
-    assignedEmployeeId:
-      typeof safeShift.assignedEmployeeId === "string" ? safeShift.assignedEmployeeId : "",
-    preference: typeof safeShift.preference === "string" ? safeShift.preference : "",
   });
 }
 
@@ -114,10 +107,7 @@ export function hydratePersistedState(rawState) {
   return {
     employees: hydratedEmployees,
     selectedEmployeeId,
-    constraintsConfig: normalizeConstraintsConfig(
-      rawState.constraintsConfig,
-      Boolean(rawState.balanceWorkedHours)
-    ),
+    constraintsConfig: normalizeConstraintsConfig(rawState.constraintsConfig),
     shiftClipboard: clipboard,
     uiPreferences,
   };

@@ -2,20 +2,11 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, create_engine
+from sqlalchemy import Column, DateTime, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 
 Base = declarative_base()
-
-
-class SolveJob(Base):
-    __tablename__ = "solve_jobs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    objective = Column(Integer, nullable=False)
-    status = Column(String, nullable=False, default="done")
 
 
 class AppState(Base):

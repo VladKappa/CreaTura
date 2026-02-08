@@ -116,15 +116,10 @@ export function cloneShifts(shifts) {
 
 export function normalizeShiftConstraints(shift) {
   const raw = Array.isArray(shift.constraints) ? shift.constraints : [];
-  const legacy =
-    shift.assignedEmployeeId && raw.length === 0
-      ? [{ employeeId: shift.assignedEmployeeId, preference: shift.preference || PREFERENCE_KEYS[0] }]
-      : [];
-  const merged = [...raw, ...legacy];
   const used = new Set();
   const constraints = [];
 
-  merged.forEach((constraint) => {
+  raw.forEach((constraint) => {
     const employeeId = constraint?.employeeId || "";
     if (!employeeId || used.has(employeeId)) return;
     const preference = PREFERENCE_KEYS.includes(constraint?.preference)
@@ -137,8 +132,6 @@ export function normalizeShiftConstraints(shift) {
   return {
     ...shift,
     constraints,
-    assignedEmployeeId: "",
-    preference: "",
   };
 }
 
