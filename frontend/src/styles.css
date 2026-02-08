@@ -37,6 +37,14 @@ body,
   align-items: center;
 }
 
+.day-actions > * {
+  min-width: 0;
+}
+
+.day-actions .MuiButton-root {
+  width: 100%;
+}
+
 .day-card-scroll {
   display: grid;
   gap: 10px;

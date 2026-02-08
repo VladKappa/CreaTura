@@ -1,9 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Button,
   Chip,
-  FormControlLabel,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   MenuItem,
   Paper,
   Select,
@@ -43,7 +46,7 @@ export default function WeekCalendar({
 }) {
   const [activeBlockKey, setActiveBlockKey] = useState("");
   const [activeSelection, setActiveSelection] = useState(null);
-  const [expandedEditors, setExpandedEditors] = useState({});
+  const [editorDay, setEditorDay] = useState(null);
   const [isInspectorVisible, setIsInspectorVisible] = useState(true);
 
   const employeeMap = useMemo(
@@ -60,10 +63,6 @@ export default function WeekCalendar({
 
   function makeShiftKey(date, type, start, end) {
     return `${date}__${type}__${start}__${end}`;
-  }
-
-  function toggleEditor(dayIso) {
-    setExpandedEditors((prev) => ({ ...prev, [dayIso]: !prev[dayIso] }));
   }
 
   const legendMap = new Map();
@@ -87,6 +86,14 @@ export default function WeekCalendar({
     ? resolveShift(activeSelection.source, activeSelection.segment.shiftId)
     : null;
   const selectedConstraints = selectedShift?.constraints || [];
+  const editorOverride = editorDay ? employee.overrides[editorDay.iso] || null : null;
+
+  useEffect(() => {
+    if (!editorDay) return;
+    if (!employee.overrides[editorDay.iso]) {
+      setEditorDay(null);
+    }
+  }, [editorDay, employee.overrides]);
 
   return (
     <Paper variant="outlined" sx={{ p: 1.5 }}>
@@ -221,17 +228,24 @@ export default function WeekCalendar({
                     </Box>
 
                     <Box className="day-actions">
-                      <FormControlLabel
-                        control={
-                          <Switch
-                            size="small"
-                            checked={Boolean(override)}
-                            onChange={(e) => onToggleOverride(day, e.target.checked)}
-                          />
-                        }
-                        label={t("common.custom", {}, "Custom")}
-                        sx={{ m: 0 }}
-                      />
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        spacing={0.4}
+                        sx={{
+                          minWidth: 0,
+                          px: 0.2,
+                        }}
+                      >
+                        <Switch
+                          size="small"
+                          checked={Boolean(override)}
+                          onChange={(e) => onToggleOverride(day, e.target.checked)}
+                        />
+                        <Typography variant="caption" noWrap>
+                          {t("common.custom", {}, "Custom")}
+                        </Typography>
+                      </Stack>
                       <Button type="button" size="small" variant="outlined" onClick={() => onCopyDay(day)}>
                         {t("common.copy", {}, "Copy")}
                       </Button>
@@ -245,10 +259,8 @@ export default function WeekCalendar({
                         {t("common.paste", {}, "Paste")}
                       </Button>
                       {override ? (
-                        <Button type="button" size="small" variant="outlined" onClick={() => toggleEditor(day.iso)}>
-                          {expandedEditors[day.iso]
-                            ? t("common.hideEdit", {}, "Hide Edit")
-                            : t("common.edit", {}, "Edit")}
+                        <Button type="button" size="small" variant="outlined" onClick={() => setEditorDay(day)}>
+                          {t("common.edit", {}, "Edit")}
                         </Button>
                       ) : null}
                     </Box>
@@ -349,22 +361,53 @@ export default function WeekCalendar({
                         })}
                       </Box>
 
-                      {override && expandedEditors[day.iso] ? (
-                        <ShiftEditor
-                          t={t}
-                          shifts={override}
-                          onAdd={() => onAddOverrideShift(day)}
-                          onRemove={(shiftId) => onRemoveOverrideShift(day, shiftId)}
-                          onChange={(shiftId, patch) => onUpdateOverrideShift(day, shiftId, patch)}
-                          errorMessage={getOverrideError(day)}
-                        />
-                      ) : null}
                     </Box>
                   </Paper>
                 );
               })}
             </Box>
           </Box>
+
+          <Dialog
+            open={Boolean(editorDay)}
+            onClose={() => setEditorDay(null)}
+            maxWidth="sm"
+            fullWidth
+          >
+            <DialogTitle>
+              {editorDay
+                ? t(
+                    "week.customEditorTitle",
+                    {
+                      day: editorDay.label,
+                      date: editorDay.dateText,
+                    },
+                    `Custom day shifts: ${editorDay.label} ${editorDay.dateText}`
+                  )
+                : t("week.customEditorTitle", { day: "-", date: "" }, "Custom day shifts")}
+            </DialogTitle>
+            <DialogContent dividers>
+              {editorDay && editorOverride ? (
+                <ShiftEditor
+                  t={t}
+                  shifts={editorOverride}
+                  onAdd={() => onAddOverrideShift(editorDay)}
+                  onRemove={(shiftId) => onRemoveOverrideShift(editorDay, shiftId)}
+                  onChange={(shiftId, patch) => onUpdateOverrideShift(editorDay, shiftId, patch)}
+                  errorMessage={getOverrideError(editorDay)}
+                />
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  {t("week.selectShiftHint", {}, "Select a shift block to edit employee constraints.")}
+                </Typography>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setEditorDay(null)}>
+                {t("common.close", {}, "Close")}
+              </Button>
+            </DialogActions>
+          </Dialog>
 
           {isInspectorVisible ? (
             <Paper

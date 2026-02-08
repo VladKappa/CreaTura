@@ -10,6 +10,7 @@ export default function ShiftEditor({
   onChange,
   errorMessage,
   disabled = false,
+  forceStacked = false,
 }) {
   return (
     <Stack spacing={1}>
@@ -28,16 +29,22 @@ export default function ShiftEditor({
               placeholder={defaultShiftName(index)}
               disabled={disabled}
               size="small"
+              fullWidth
               onChange={(e) => onChange(shift.id, { name: e.target.value })}
             />
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems="center">
+            <Stack
+              direction={forceStacked ? "column" : { xs: "column", md: "row" }}
+              spacing={1}
+              alignItems={forceStacked ? "stretch" : { xs: "stretch", md: "center" }}
+            >
               <TextField
                 type="time"
                 value={shift.start}
                 disabled={disabled}
                 size="small"
                 onChange={(e) => onChange(shift.id, { start: e.target.value })}
-                sx={{ minWidth: 132 }}
+                fullWidth
+                sx={{ minWidth: 0, maxWidth: forceStacked ? "100%" : { xs: "100%", md: 170 } }}
               />
               <Typography variant="caption" color="text.secondary">
                 {t("shift.from", {}, "to")}
@@ -48,15 +55,19 @@ export default function ShiftEditor({
                 disabled={disabled}
                 size="small"
                 onChange={(e) => onChange(shift.id, { end: e.target.value })}
-                sx={{ minWidth: 132 }}
+                fullWidth
+                sx={{ minWidth: 0, maxWidth: forceStacked ? "100%" : { xs: "100%", md: 170 } }}
               />
-              <Box sx={{ flex: 1 }} />
+              <Box sx={{ flex: 1, display: forceStacked ? "none" : "block" }} />
               <IconButton
                 color="error"
                 size="small"
                 disabled={disabled}
                 onClick={() => onRemove(shift.id)}
                 aria-label="Remove shift"
+                sx={{
+                  alignSelf: forceStacked ? "flex-end" : "center",
+                }}
               >
                 <DeleteOutlineOutlinedIcon fontSize="small" />
               </IconButton>

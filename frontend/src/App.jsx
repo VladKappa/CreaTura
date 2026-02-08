@@ -827,7 +827,7 @@ export default function App() {
           fullWidth
         >
           <DialogTitle>{t("app.templateDialogTitle", {}, "Default Template (Mon-Sun)")}</DialogTitle>
-          <DialogContent dividers>
+          <DialogContent dividers sx={{ overflowX: "hidden", px: { xs: 1, sm: 2 } }}>
             {selectedEmployee ? (
               <TemplateGrid
                 t={t}

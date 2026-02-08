@@ -30,14 +30,15 @@ export default function TemplateGrid({
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
           gap: 1.2,
+          alignItems: "start",
         }}
       >
         {week.map((day) => {
           const shifts = employee.defaultShiftsByDay[day.dayIndex];
           return (
-            <Paper key={day.label} variant="outlined" sx={{ p: 1.2 }}>
+            <Paper key={day.label} variant="outlined" sx={{ p: 1.2, minWidth: 0 }}>
               <Stack spacing={1}>
                 <Stack direction="row" justifyContent="space-between" alignItems="center">
                   <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
@@ -47,11 +48,12 @@ export default function TemplateGrid({
                     {day.dateText}
                   </Typography>
                 </Stack>
-                <Stack direction="row" spacing={1}>
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                   <Button
                     type="button"
                     size="small"
                     variant="outlined"
+                    sx={{ flex: "1 1 92px" }}
                     onClick={() => onCopyDay(day)}
                   >
                     {t("common.copy", {}, "Copy")}
@@ -60,6 +62,7 @@ export default function TemplateGrid({
                     type="button"
                     size="small"
                     variant="outlined"
+                    sx={{ flex: "1 1 92px" }}
                     disabled={!clipboardLabel}
                     onClick={() => onPasteDay(day)}
                   >
@@ -73,6 +76,7 @@ export default function TemplateGrid({
                   onRemove={(shiftId) => onRemoveShift(day, shiftId)}
                   onChange={(shiftId, patch) => onUpdateShift(day, shiftId, patch)}
                   errorMessage={getErrorMessage(day)}
+                  forceStacked
                 />
               </Stack>
             </Paper>
