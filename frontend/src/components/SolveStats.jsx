@@ -24,6 +24,124 @@ function formatRange(start, end) {
   return `${start} - ${end}${overnight ? " (+1d)" : ""}`;
 }
 
+function createConstraintStats(employeeId = "", employeeName = "") {
+  return {
+    employeeId,
+    employeeName,
+    hardTotal: 0,
+    hardSatisfied: 0,
+    hardViolated: 0,
+    hardRequire: 0,
+    hardRequireSatisfied: 0,
+    hardForbid: 0,
+    hardForbidSatisfied: 0,
+    softTotal: 0,
+    softSatisfied: 0,
+    softViolated: 0,
+    softPrefer: 0,
+    softPreferSatisfied: 0,
+    softAvoid: 0,
+    softAvoidSatisfied: 0,
+  };
+}
+
+function shiftMatchesRule(shift, rule) {
+  if (rule?.date !== undefined && rule?.date !== null && shift.date !== rule.date) return false;
+  if (rule?.day !== undefined && rule?.day !== null && shift.day !== rule.day) return false;
+  if (rule?.shift_type !== undefined && rule?.shift_type !== null && shift.type !== rule.shift_type) {
+    return false;
+  }
+  return true;
+}
+
+function assignmentKey(shift) {
+  return `${shift.date}__${shift.day}__${shift.type}__${shift.start}__${shift.end}`;
+}
+
+function hasEmployeeAssigned(assignment, employeeId) {
+  return (assignment?.assigned || []).some((assigned) => assigned.employee_id === employeeId);
+}
+
+function buildConstraintStatsByEmployee({ employees, solvePayload, solveResult }) {
+  const byId = {};
+  const employeeNameById = Object.fromEntries(
+    (employees || []).map((employee) => [employee.id, employee.name])
+  );
+
+  function ensure(employeeId) {
+    if (!byId[employeeId]) {
+      byId[employeeId] = createConstraintStats(
+        employeeId,
+        employeeNameById[employeeId] || "Unknown employee"
+      );
+    }
+    return byId[employeeId];
+  }
+
+  if (!solvePayload?.constraints || !Array.isArray(solvePayload?.shifts)) {
+    return byId;
+  }
+
+  const assignmentByShift = {};
+  (solveResult?.assignments || []).forEach((assignment) => {
+    assignmentByShift[assignmentKey(assignment)] = assignment;
+  });
+
+  (solvePayload.constraints.hard || []).forEach((hardRule) => {
+    const target = ensure(hardRule.employee_id);
+    target.hardTotal += 1;
+    if (hardRule.type === "require_shift") target.hardRequire += 1;
+    if (hardRule.type === "forbid_shift") target.hardForbid += 1;
+
+    const matchingShifts = solvePayload.shifts.filter((shift) => shiftMatchesRule(shift, hardRule));
+    if (matchingShifts.length === 0) return;
+
+    const satisfied = matchingShifts.every((shift) => {
+      const assignment = assignmentByShift[assignmentKey(shift)];
+      if (!assignment) return false;
+      const assigned = hasEmployeeAssigned(assignment, hardRule.employee_id);
+      if (hardRule.type === "require_shift") return assigned;
+      return !assigned;
+    });
+
+    if (satisfied) {
+      target.hardSatisfied += 1;
+      if (hardRule.type === "require_shift") target.hardRequireSatisfied += 1;
+      if (hardRule.type === "forbid_shift") target.hardForbidSatisfied += 1;
+    } else {
+      target.hardViolated += 1;
+    }
+  });
+
+  (solvePayload.constraints.soft || []).forEach((softRule) => {
+    const target = ensure(softRule.employee_id);
+    target.softTotal += 1;
+    if (softRule.type === "prefer_assignment") target.softPrefer += 1;
+    if (softRule.type === "avoid_assignment") target.softAvoid += 1;
+
+    const matchingShifts = solvePayload.shifts.filter((shift) => shiftMatchesRule(shift, softRule));
+    if (matchingShifts.length === 0) return;
+
+    const satisfied = matchingShifts.every((shift) => {
+      const assignment = assignmentByShift[assignmentKey(shift)];
+      if (!assignment) return false;
+      const assigned = hasEmployeeAssigned(assignment, softRule.employee_id);
+      if (softRule.type === "prefer_assignment") return assigned;
+      return !assigned;
+    });
+
+    if (satisfied) {
+      target.softSatisfied += 1;
+      if (softRule.type === "prefer_assignment") target.softPreferSatisfied += 1;
+      if (softRule.type === "avoid_assignment") target.softAvoidSatisfied += 1;
+    } else {
+      target.softViolated += 1;
+    }
+  });
+
+  return byId;
+}
+
 function PieChart({
   title,
   items,
@@ -145,7 +263,7 @@ function PieChart({
   );
 }
 
-export default function SolveStats({ solveResult, employees }) {
+export default function SolveStats({ solveResult, employees, solvePayload }) {
   const [metric, setMetric] = useState("hours");
   const [sortDirection, setSortDirection] = useState("desc");
   const [activeEmployeeId, setActiveEmployeeId] = useState("");
@@ -159,6 +277,7 @@ export default function SolveStats({ solveResult, employees }) {
         shiftCount: 0,
         totalHours: 0,
         shifts: [],
+        ...createConstraintStats(employee.id, employee.name),
       };
     });
 
@@ -172,6 +291,7 @@ export default function SolveStats({ solveResult, employees }) {
             shiftCount: 0,
             totalHours: 0,
             shifts: [],
+            ...createConstraintStats(assigned.employee_id, assigned.employee_name || "Unknown employee"),
           };
         }
         const target = byId[assigned.employee_id];
@@ -195,6 +315,7 @@ export default function SolveStats({ solveResult, employees }) {
             shiftCount: 0,
             totalHours: 0,
             shifts: [],
+            ...createConstraintStats(load.employee_id, load.employee_name || "Unknown employee"),
           };
         }
         if (byId[load.employee_id].shiftCount === 0 && Number.isFinite(load.assigned_count)) {
@@ -203,13 +324,37 @@ export default function SolveStats({ solveResult, employees }) {
       });
     }
 
+    const constraintStatsByEmployee = buildConstraintStatsByEmployee({
+      employees,
+      solvePayload,
+      solveResult,
+    });
+
+    Object.values(constraintStatsByEmployee).forEach((constraintStats) => {
+      if (!byId[constraintStats.employeeId]) {
+        byId[constraintStats.employeeId] = {
+          employeeId: constraintStats.employeeId,
+          employeeName: constraintStats.employeeName || "Unknown employee",
+          shiftCount: 0,
+          totalHours: 0,
+          shifts: [],
+          ...createConstraintStats(constraintStats.employeeId, constraintStats.employeeName),
+        };
+      }
+      byId[constraintStats.employeeId] = {
+        ...byId[constraintStats.employeeId],
+        ...constraintStats,
+      };
+    });
+
     return Object.values(byId);
-  }, [employees, solveResult]);
+  }, [employees, solvePayload, solveResult]);
   const statsWithColors = useMemo(
     () =>
       stats.map((entry, index) => ({
         ...entry,
         color: SHIFT_COLORS[index % SHIFT_COLORS.length],
+        constraintCount: Number(entry.hardTotal || 0) + Number(entry.softTotal || 0),
       })),
     [stats]
   );
@@ -273,6 +418,15 @@ export default function SolveStats({ solveResult, employees }) {
 
       <div className="solve-pies">
         <PieChart
+          title="Constraint Count Distribution"
+          items={statsWithColors}
+          valueKey="constraintCount"
+          formatValue={(value) => `${Math.round(value)}`}
+          formatTotal={(value) => `${Math.round(value)}`}
+          activeEmployeeId={activeEmployeeId}
+          onSelectEmployee={setActiveEmployeeId}
+        />
+        <PieChart
           title="Shift Count Distribution"
           items={statsWithColors}
           valueKey="shiftCount"
@@ -303,12 +457,15 @@ export default function SolveStats({ solveResult, employees }) {
               type="button"
               className={`solve-stats-row${isActive ? " active" : ""}`}
               onClick={() => setActiveEmployeeId(entry.employeeId)}
-              title={`${entry.employeeName}: ${entry.shiftCount} shifts, ${entry.totalHours.toFixed(1)}h`}
+              title={`${entry.employeeName}: ${entry.shiftCount} shifts, ${entry.totalHours.toFixed(
+                1
+              )}h, ${entry.hardTotal + entry.softTotal} constraints`}
             >
               <div className="solve-stats-row-head">
                 <strong>{entry.employeeName}</strong>
                 <span>
-                  {entry.shiftCount} shifts | {entry.totalHours.toFixed(1)}h
+                  {entry.shiftCount} shifts | {entry.totalHours.toFixed(1)}h |{" "}
+                  {entry.hardTotal + entry.softTotal} constraints
                 </span>
               </div>
 
@@ -328,6 +485,19 @@ export default function SolveStats({ solveResult, employees }) {
                   <b>{entry.shiftCount}</b>
                 </div>
               </div>
+
+              <div className="solve-constraints-inline">
+                <span
+                  className={`solve-constraint-chip${entry.hardViolated > 0 ? " bad" : " good"}`}
+                >
+                  Hard {entry.hardSatisfied}/{entry.hardTotal}
+                </span>
+                <span
+                  className={`solve-constraint-chip${entry.softViolated > 0 ? " warn" : " good"}`}
+                >
+                  Soft {entry.softSatisfied}/{entry.softTotal}
+                </span>
+              </div>
             </button>
           );
         })}
@@ -335,6 +505,42 @@ export default function SolveStats({ solveResult, employees }) {
 
       {activeEntry ? (
         <div className="solve-stats-detail">
+          <div className="solve-stats-constraints">
+            <p>
+              <strong>{activeEntry.employeeName}</strong> constraint statistics:
+            </p>
+            {activeEntry.hardTotal + activeEntry.softTotal === 0 ? (
+              <p className="subtle">No user hard/soft constraints configured for this employee.</p>
+            ) : (
+              <div className="solve-stats-constraints-grid">
+                <article className="solve-stats-constraint-card">
+                  <h4>Hard constraints</h4>
+                  <p>
+                    Satisfied {activeEntry.hardSatisfied} / {activeEntry.hardTotal}
+                  </p>
+                  <p>
+                    Require met {activeEntry.hardRequireSatisfied} / {activeEntry.hardRequire}
+                  </p>
+                  <p>
+                    Forbid respected {activeEntry.hardForbidSatisfied} / {activeEntry.hardForbid}
+                  </p>
+                </article>
+                <article className="solve-stats-constraint-card">
+                  <h4>Soft constraints</h4>
+                  <p>
+                    Satisfied {activeEntry.softSatisfied} / {activeEntry.softTotal}
+                  </p>
+                  <p>
+                    Preferred met {activeEntry.softPreferSatisfied} / {activeEntry.softPrefer}
+                  </p>
+                  <p>
+                    Unpreferred respected {activeEntry.softAvoidSatisfied} / {activeEntry.softAvoid}
+                  </p>
+                </article>
+              </div>
+            )}
+          </div>
+
           <p>
             <strong>{activeEntry.employeeName}</strong> assignments:
           </p>

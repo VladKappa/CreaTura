@@ -50,6 +50,7 @@ export default function App() {
   const [isConstraintsPopupOpen, setIsConstraintsPopupOpen] = useState(false);
   const [isSolving, setIsSolving] = useState(false);
   const [solveResult, setSolveResult] = useState(null);
+  const [lastSolvePayload, setLastSolvePayload] = useState(null);
   const [solveError, setSolveError] = useState("");
   const [constraintsConfig, setConstraintsConfig] = useState(DEFAULT_CONSTRAINTS_CONFIG);
   const [isStateHydrating, setIsStateHydrating] = useState(true);
@@ -160,6 +161,7 @@ export default function App() {
   useEffect(() => {
     setSolveResult(null);
     setSolveError("");
+    setLastSolvePayload(null);
   }, [employees, selectedEmployeeId, constraintsConfig]);
 
   function updateEmployee(employeeId, updater) {
@@ -490,6 +492,7 @@ export default function App() {
     setIsSolving(true);
     setSolveError("");
     setSolveResult(null);
+    setLastSolvePayload(payload);
     try {
       const result = await solveSchedule(payload);
       setSolveResult(result);
@@ -577,7 +580,13 @@ export default function App() {
           </>
         )}
         {solveResult ? <SolveDiagnostics solveResult={solveResult} /> : null}
-        {hasFeasibleSolve ? <SolveStats solveResult={solveResult} employees={employees} /> : null}
+        {hasFeasibleSolve ? (
+          <SolveStats
+            solveResult={solveResult}
+            employees={employees}
+            solvePayload={lastSolvePayload}
+          />
+        ) : null}
       </section>
 
       {isEmployeePanelOpen ? (

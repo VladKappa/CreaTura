@@ -979,6 +979,40 @@ button {
   gap: 5px;
 }
 
+.solve-constraints-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.solve-constraint-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #2a3f36;
+  background: #f7fbf9;
+}
+
+.solve-constraint-chip.good {
+  border-color: #9bcab7;
+  background: #edf8f3;
+  color: #1d5a43;
+}
+
+.solve-constraint-chip.warn {
+  border-color: #e3cf9b;
+  background: #fff8e8;
+  color: #775700;
+}
+
+.solve-constraint-chip.bad {
+  border-color: #e2a6a6;
+  background: #fff1f1;
+  color: #8f2f2f;
+}
+
 .solve-stats-bar {
   display: grid;
   grid-template-columns: 46px minmax(0, 1fr) auto;
@@ -1024,6 +1058,40 @@ button {
   background: #fcfefd;
   display: grid;
   gap: 6px;
+}
+
+.solve-stats-constraints {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+  background: #ffffff;
+  display: grid;
+  gap: 6px;
+}
+
+.solve-stats-constraints-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.solve-stats-constraint-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fcfffd;
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.solve-stats-constraint-card h4 {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.solve-stats-constraint-card p {
+  font-size: 0.82rem;
+  color: var(--muted);
 }
 
 .solve-stats-shifts {
