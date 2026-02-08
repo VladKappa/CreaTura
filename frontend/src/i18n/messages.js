@@ -63,6 +63,7 @@ const MESSAGES = {
     "week.inspectorTitle": "Shift Inspector",
     "week.selectShiftHint": "Select a shift block to edit employee constraints.",
     "week.shiftLabel": "Shift: {name}",
+    "week.openInspector": "Open shift inspector",
     "week.noConstraints": "No constraints yet.",
     "week.selectEmployee": "Select employee",
     "week.addConstraint": "+ Add Constraint",
@@ -75,7 +76,7 @@ const MESSAGES = {
     "shift.overnight": "overnight",
     "shift.add": "+ Add Shift",
     "constraints.description":
-      "Configure default solver rules and preference weights used when building solve requests.",
+      "Configure solver feature toggles and preference weights used when building solve requests.",
     "constraints.maxWorktimeTitle": "Max Worktime In A Row",
     "constraints.maxWorktimeDesc":
       "Hard rule. Limits continuous back-to-back assignment time for each employee. Applies to shift chains (not a single shift): with 8h max, two 4h shifts in a row are allowed, two 8h shifts are not.",
@@ -104,9 +105,36 @@ const MESSAGES = {
     "solve.infeasibleReason":
       "Current hard constraints and required shift coverage cannot be satisfied together.",
     "solve.likelyCauses": "Likely infeasibility causes",
-    "solve.defaultRules": "Default rules: {rules}",
     "solve.toggles": "Enabled feature toggles: {toggles}",
     "solve.noWarnings": "No additional solver warnings were returned.",
+    "solve.reason.infeasible_no_feasible_assignment":
+      "No feasible assignment satisfies current hard constraints and coverage.",
+    "solve.infeasibility.hardConflictRequiredAndForbidden":
+      "{shift}: same employee(s) are both required and forbidden ({employeeNames}).",
+    "solve.infeasibility.hardRequiredExceedsCoverage":
+      "{shift}: {hardRequiredCount} hard-required employee(s) exceed required coverage {requiredCoverage}.",
+    "solve.infeasibility.coverageExceedsAvailableAfterForbids":
+      "{shift}: required coverage {requiredCoverage} exceeds available employees {availableEmployees} after forbids.",
+    "solve.infeasibility.maxWorktimeWindowCapacityConflict":
+      "Max-worktime window [{windowPreview}] needs {requiredAssignments} assignments, but rule allows at most {allowedAssignments}.",
+    "solve.infeasibility.maxWorktimeWindowEmployeeOverrequired":
+      "{employeeName} is hard-required on {hardRequiredCount} shifts inside window [{windowPreview}], exceeding allowed {allowedAssignments}.",
+    "solve.infeasibility.hardMinRestConflictOnRequiredChain":
+      "{employeeName} is hard-required on {leftShift} and {rightShift} with only {restHours}h rest (< {minRestHours}h hard minimum).",
+    "solve.infeasibility.quickAnalysisInconclusive":
+      "No direct contradiction was isolated by quick analysis; infeasibility is likely caused by the combined effect of hard constraints and required coverage.",
+    "solve.infeasibility.unknown": "Infeasibility reason: {code}",
+    "solve.toggle.max_worktime_in_row": "Max Worktime In A Row",
+    "solve.toggle.min_rest_after_shift_hard":
+      "Minimum Rest Gap After Configured Max Worktime In A Row (Hard)",
+    "solve.toggle.min_rest_after_shift_soft":
+      "Minimum Rest Gap After Configured Max Worktime In A Row (Soft)",
+    "solve.toggle.balance_worked_hours": "Balance Worked Hours",
+    "solve.warning.noMatchingHard":
+      "No shifts matched hard constraint ({type}) for employee_id '{employeeId}'.",
+    "solve.warning.noMatchingSoft":
+      "No shifts matched soft constraint ({type}) for employee_id '{employeeId}'.",
+    "solve.warning.unknown": "Solver warning: {code}",
     "solve.action.relax": "Relax one or more hard constraints (Desired/Undesired assignments).",
     "solve.action.staff": "Increase available employees or reduce required coverage per shift.",
     "solve.action.overrides":
@@ -117,6 +145,15 @@ const MESSAGES = {
     "solve.unsatisfiedCount": "Unsatisfied soft constraints: {count}",
     "solve.noUnsatisfied": "No soft constraints were violated or left unmet.",
     "solve.whyNotHigher": "Why objective is not higher",
+    "solve.unsat.preferAssignment":
+      "{employee}: preferred assignment not met for {shift} (+{weight} available).",
+    "solve.unsat.avoidAssignment":
+      "{employee}: avoid assignment was violated on {shift} (-{weight}).",
+    "solve.unsat.minRestAfterShift":
+      "{employee}: rest gap {restHours}h after {leftShift} before {rightShift} (required {requiredHours}h, -{weight}).",
+    "solve.unsat.balanceWorkedHours":
+      "Workload imbalance: min {minHours}h vs max {maxHours}h (span {spanHours}h, allowed {allowedHours}h = {multiplier}x avg shift {avgShiftHours}h, excess {excessHours}h, weight {weight}).",
+    "solve.unsat.generic": "{employee}: {type} ({status}).",
     "stats.title": "Employee Workload",
     "stats.subtitle": "Interactive breakdown of solved shifts and total scheduled hours.",
     "stats.sortHours": "Sort by Hours",
@@ -206,6 +243,7 @@ const MESSAGES = {
     "week.inspectorTitle": "Inspector tura",
     "week.selectShiftHint": "Selecteaza un bloc de tura pentru a edita constrangerile.",
     "week.shiftLabel": "Tura: {name}",
+    "week.openInspector": "Deschide inspectorul de ture",
     "week.noConstraints": "Nu exista constrangeri.",
     "week.selectEmployee": "Selecteaza angajat",
     "week.addConstraint": "+ Adauga constrangere",
@@ -218,7 +256,7 @@ const MESSAGES = {
     "shift.overnight": "overnight",
     "shift.add": "+ Adauga tura",
     "constraints.description":
-      "Configureaza regulile implicite ale solver-ului si ponderile preferintelor trimise la rezolvare.",
+      "Configureaza feature toggles ale solver-ului si ponderile preferintelor trimise la rezolvare.",
     "constraints.maxWorktimeTitle": "Timp maxim de lucru consecutiv",
     "constraints.maxWorktimeDesc":
       "Regula hard. Limiteaza timpul de lucru continuu pe ture consecutive. Se aplica lanturilor de ture (nu unei ture singulare): la 8h, doua ture de 4h sunt permise, doua ture de 8h nu.",
@@ -247,9 +285,36 @@ const MESSAGES = {
     "solve.infeasibleReason":
       "Constrangerile hard si acoperirea necesara a turelor nu pot fi satisfacute simultan.",
     "solve.likelyCauses": "Cauze probabile ale infezabilitatii",
-    "solve.defaultRules": "Reguli implicite: {rules}",
     "solve.toggles": "Feature toggles active: {toggles}",
     "solve.noWarnings": "Solver-ul nu a returnat avertizari suplimentare.",
+    "solve.reason.infeasible_no_feasible_assignment":
+      "Nu exista o alocare fezabila care sa satisfaca simultan constrangerile hard si acoperirea turelor.",
+    "solve.infeasibility.hardConflictRequiredAndForbidden":
+      "{shift}: aceiasi angajati sunt simultan required si forbidden ({employeeNames}).",
+    "solve.infeasibility.hardRequiredExceedsCoverage":
+      "{shift}: {hardRequiredCount} angajati hard-required depasesc acoperirea ceruta {requiredCoverage}.",
+    "solve.infeasibility.coverageExceedsAvailableAfterForbids":
+      "{shift}: acoperirea ceruta {requiredCoverage} depaseste angajatii disponibili {availableEmployees} dupa forbid.",
+    "solve.infeasibility.maxWorktimeWindowCapacityConflict":
+      "Fereastra max-worktime [{windowPreview}] necesita {requiredAssignments} alocari, dar regula permite cel mult {allowedAssignments}.",
+    "solve.infeasibility.maxWorktimeWindowEmployeeOverrequired":
+      "{employeeName} este hard-required pe {hardRequiredCount} ture in fereastra [{windowPreview}], peste limita {allowedAssignments}.",
+    "solve.infeasibility.hardMinRestConflictOnRequiredChain":
+      "{employeeName} este hard-required pe {leftShift} si {rightShift} cu doar {restHours}h pauza (< {minRestHours}h hard).",
+    "solve.infeasibility.quickAnalysisInconclusive":
+      "Nu a fost izolata o contradictie directa in analiza rapida; infezabilitatea este probabil cauzata de efectul combinat al constrangerilor hard si al acoperirii.",
+    "solve.infeasibility.unknown": "Motiv de infezabilitate: {code}",
+    "solve.toggle.max_worktime_in_row": "Timp maxim de lucru consecutiv",
+    "solve.toggle.min_rest_after_shift_hard":
+      "Pauza minima dupa pragul de timp maxim consecutiv (Hard)",
+    "solve.toggle.min_rest_after_shift_soft":
+      "Pauza minima dupa pragul de timp maxim consecutiv (Soft)",
+    "solve.toggle.balance_worked_hours": "Echilibrare ore lucrate",
+    "solve.warning.noMatchingHard":
+      "Nicio tura nu a corespuns constrangerii hard ({type}) pentru employee_id '{employeeId}'.",
+    "solve.warning.noMatchingSoft":
+      "Nicio tura nu a corespuns constrangerii soft ({type}) pentru employee_id '{employeeId}'.",
+    "solve.warning.unknown": "Avertizare solver: {code}",
     "solve.action.relax": "Relaxeaza una sau mai multe constrangeri hard (Desired/Undesired).",
     "solve.action.staff": "Creste numarul de angajati sau reduce acoperirea necesara pe tura.",
     "solve.action.overrides":
@@ -260,6 +325,15 @@ const MESSAGES = {
     "solve.unsatisfiedCount": "Constrangeri soft nesatisfacute: {count}",
     "solve.noUnsatisfied": "Nu exista constrangeri soft incalcate sau neindeplinite.",
     "solve.whyNotHigher": "De ce obiectivul nu este mai mare",
+    "solve.unsat.preferAssignment":
+      "{employee}: alocarea preferata nu a fost satisfacuta pentru {shift} (+{weight} disponibil).",
+    "solve.unsat.avoidAssignment":
+      "{employee}: regula de evitare a fost incalcata pe {shift} (-{weight}).",
+    "solve.unsat.minRestAfterShift":
+      "{employee}: pauza {restHours}h dupa {leftShift} inainte de {rightShift} (necesar {requiredHours}h, -{weight}).",
+    "solve.unsat.balanceWorkedHours":
+      "Dezechilibru incarcare: minim {minHours}h vs maxim {maxHours}h (span {spanHours}h, permis {allowedHours}h = {multiplier}x durata medie tura {avgShiftHours}h, exces {excessHours}h, pondere {weight}).",
+    "solve.unsat.generic": "{employee}: {type} ({status}).",
     "stats.title": "Incarcare angajati",
     "stats.subtitle": "Distributie interactiva a turelor rezolvate si a orelor totale programate.",
     "stats.sortHours": "Sorteaza dupa ore",

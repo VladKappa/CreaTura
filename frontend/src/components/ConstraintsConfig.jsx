@@ -41,7 +41,7 @@ export default function ConstraintsConfig({ t, config, onChange }) {
         {t(
           "constraints.description",
           {},
-          "Configure default solver rules and preference weights used when building solve requests."
+          "Configure solver feature toggles and preference weights used when building solve requests."
         )}
       </Typography>
 

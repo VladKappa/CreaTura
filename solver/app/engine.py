@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import date
+import json
 import math
 import time
 
@@ -99,9 +100,27 @@ def infer_infeasibility_reasons(
     payload: SolverRequest,
     num_employees: int,
     max_worktime_violating_windows: list[list[int]],
-) -> list[str]:
-    reasons: list[str] = []
+) -> list[dict]:
+    reasons: list[dict] = []
     employee_name_by_id = {employee.id: employee.name for employee in payload.employees}
+
+    def shift_ref(shift: Shift) -> dict:
+        return {
+            "day": shift.day,
+            "date": shift.date,
+            "type": shift.type,
+            "start": shift.start,
+            "end": shift.end,
+        }
+
+    def add_reason(code: str, message: str, **data) -> None:
+        reasons.append(
+            {
+                "code": code,
+                "message": message,
+                **data,
+            }
+        )
 
     hard_require_by_shift = [set() for _ in payload.shifts]
     hard_forbid_by_shift = [set() for _ in payload.shifts]
@@ -124,19 +143,30 @@ def infer_infeasibility_reasons(
             overlap_names = ", ".join(
                 employee_name_by_id.get(employee_id, employee_id) for employee_id in sorted(overlap)
             )
-            reasons.append(
-                f"{shift_label(shift)}: same employee(s) are both required and forbidden ({overlap_names})."
+            add_reason(
+                "hard_conflict_required_and_forbidden",
+                f"{shift_label(shift)}: same employee(s) are both required and forbidden ({overlap_names}).",
+                shift=shift_ref(shift),
+                employee_names=overlap_names,
             )
 
         if len(required_ids) > shift.required:
-            reasons.append(
-                f"{shift_label(shift)}: {len(required_ids)} hard-required employee(s) exceed required coverage {shift.required}."
+            add_reason(
+                "hard_required_exceeds_shift_coverage",
+                f"{shift_label(shift)}: {len(required_ids)} hard-required employee(s) exceed required coverage {shift.required}.",
+                shift=shift_ref(shift),
+                hard_required_count=len(required_ids),
+                required_coverage=shift.required,
             )
 
         allowed_employees = num_employees - len(forbidden_ids)
         if shift.required > allowed_employees:
-            reasons.append(
-                f"{shift_label(shift)}: required coverage {shift.required} exceeds available employees {allowed_employees} after forbids."
+            add_reason(
+                "coverage_exceeds_available_after_forbids",
+                f"{shift_label(shift)}: required coverage {shift.required} exceeds available employees {allowed_employees} after forbids.",
+                shift=shift_ref(shift),
+                required_coverage=shift.required,
+                available_employees=allowed_employees,
             )
 
     if payload.feature_toggles.max_worktime_in_row_enabled:
@@ -147,8 +177,12 @@ def infer_infeasibility_reasons(
                 window_preview = ", ".join(shift_label(payload.shifts[shift_idx]) for shift_idx in window[:3])
                 if len(window) > 3:
                     window_preview += f", ... ({len(window)} shifts)"
-                reasons.append(
-                    f"Max-worktime window [{window_preview}] needs {window_required} assignments, but rule allows at most {window_capacity}."
+                add_reason(
+                    "max_worktime_window_capacity_conflict",
+                    f"Max-worktime window [{window_preview}] needs {window_required} assignments, but rule allows at most {window_capacity}.",
+                    window_preview=window_preview,
+                    required_assignments=window_required,
+                    allowed_assignments=window_capacity,
                 )
 
             for employee in payload.employees:
@@ -161,8 +195,14 @@ def infer_infeasibility_reasons(
                     )
                     if len(window) > 3:
                         window_preview += f", ... ({len(window)} shifts)"
-                    reasons.append(
-                        f"{employee.name} is hard-required on {required_count} shifts inside max-worktime window [{window_preview}], exceeding allowed {len(window) - 1}."
+                    add_reason(
+                        "max_worktime_window_employee_overrequired",
+                        f"{employee.name} is hard-required on {required_count} shifts inside max-worktime window [{window_preview}], exceeding allowed {len(window) - 1}.",
+                        employee_id=employee.id,
+                        employee_name=employee.name,
+                        hard_required_count=required_count,
+                        allowed_assignments=len(window) - 1,
+                        window_preview=window_preview,
                     )
 
     # Motivatie:
@@ -234,23 +274,34 @@ def infer_infeasibility_reasons(
                         continue
                     left_shift = payload.shifts[left_shift_idx]
                     right_shift = payload.shifts[right_shift_idx]
-                    reasons.append(
-                        f"{employee.name} is hard-required on {shift_label(left_shift)} and {shift_label(right_shift)} with only {rest_minutes / 60:.1f}h rest (< {min_rest_hard_hours}h hard minimum)."
+                    add_reason(
+                        "hard_min_rest_conflict_on_required_chain",
+                        f"{employee.name} is hard-required on {shift_label(left_shift)} and {shift_label(right_shift)} with only {rest_minutes / 60:.1f}h rest (< {min_rest_hard_hours}h hard minimum).",
+                        employee_id=employee.id,
+                        employee_name=employee.name,
+                        left_shift=shift_ref(left_shift),
+                        right_shift=shift_ref(right_shift),
+                        rest_hours=round(rest_minutes / 60, 1),
+                        min_rest_hours=min_rest_hard_hours,
                     )
 
-    unique_reasons: list[str] = []
+    unique_reasons: list[dict] = []
     seen = set()
     for reason in reasons:
-        if reason in seen:
+        key = json.dumps(reason, sort_keys=True, ensure_ascii=True)
+        if key in seen:
             continue
-        seen.add(reason)
+        seen.add(key)
         unique_reasons.append(reason)
 
     if unique_reasons:
         return unique_reasons[:10]
 
     return [
-        "No direct contradiction was isolated by quick analysis; infeasibility is likely caused by the combined effect of hard constraints and required coverage."
+        {
+            "code": "infeasibility_quick_analysis_inconclusive",
+            "message": "No direct contradiction was isolated by quick analysis; infeasibility is likely caused by the combined effect of hard constraints and required coverage.",
+        }
     ]
 
 
@@ -371,15 +422,14 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
             for window in violating_windows:
                 model.add(sum(assign[(employee_idx, shift_idx)] for shift_idx in window) <= len(window) - 1)
 
-    warnings: list[str] = []
+    warnings: list[dict] = []
     enabled_feature_toggles: list[str] = []
-    applied_default_rules: list[str] = []
     if payload.feature_toggles.max_worktime_in_row_enabled:
-        applied_default_rules.append("max_worktime_in_row")
+        enabled_feature_toggles.append("max_worktime_in_row")
     if min_rest_hard_enabled:
-        applied_default_rules.append("enforce_min_rest_after_max_worktime")
+        enabled_feature_toggles.append("min_rest_after_shift_hard")
     if min_rest_soft_enabled:
-        applied_default_rules.append("prefer_min_rest_after_max_worktime")
+        enabled_feature_toggles.append("min_rest_after_shift_soft")
 
     for hard in payload.constraints.hard:
         employee_idx = employee_idx_by_id.get(hard.employee_id)
@@ -400,7 +450,11 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
         matching_shift_ids = find_matching_shift_ids(payload.shifts, hard)
         if not matching_shift_ids:
             warnings.append(
-                f"No shifts matched hard constraint ({hard.type}) for employee_id '{hard.employee_id}'."
+                {
+                    "code": "no_matching_shift_for_hard_constraint",
+                    "constraint_type": hard.type,
+                    "employee_id": hard.employee_id,
+                }
             )
             continue
 
@@ -430,7 +484,11 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
         matching_shift_ids = find_matching_shift_ids(payload.shifts, soft)
         if not matching_shift_ids:
             warnings.append(
-                f"No shifts matched soft constraint ({soft.type}) for employee_id '{soft.employee_id}'."
+                {
+                    "code": "no_matching_shift_for_soft_constraint",
+                    "constraint_type": soft.type,
+                    "employee_id": soft.employee_id,
+                }
             )
             continue
 
@@ -576,7 +634,7 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
                     {
                         "var": short_rest_after_max_chain,
                         "coefficient": -short_rest_penalty_weight,
-                        "source": "default_soft_constraint",
+                        "source": "feature_toggle",
                         "constraint_type": "min_rest_after_shift",
                         "employee_id": payload.employees[employee_idx].id,
                         "employee_name": payload.employees[employee_idx].name,
@@ -689,10 +747,10 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
         )
         return {
             "status": "infeasible",
+            "reason_code": "infeasible_no_feasible_assignment",
             "reason": "No feasible assignment satisfies current hard constraints and coverage.",
             "infeasibility_reasons": infeasibility_reasons,
             "warnings": warnings,
-            "applied_defaults": applied_default_rules,
             "objective": None,
             "assignments": [],
             "employee_load": [],
@@ -812,7 +870,6 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
         objective=int(solver.objective_value) if objective_term_refs else 0,
         assigned_slots=total_assigned_slots,
         warnings=len(warnings),
-        default_rules=applied_default_rules,
         feature_toggles=enabled_feature_toggles,
     )
 
@@ -820,7 +877,6 @@ def solve_schedule_request(payload: SolverRequest, logger, request_id: str, star
         "status": status_text,
         "objective": int(solver.objective_value) if objective_term_refs else 0,
         "warnings": warnings,
-        "applied_defaults": applied_default_rules,
         "assignments": assignments,
         "employee_load": employee_load,
         "enabled_feature_toggles": enabled_feature_toggles,
