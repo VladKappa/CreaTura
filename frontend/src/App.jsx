@@ -11,7 +11,6 @@ import {
   AppBar,
   Box,
   Button,
-  Chip,
   Container,
   CssBaseline,
   Dialog,
@@ -31,6 +30,7 @@ import {
   createTheme,
 } from "@mui/material";
 import { solveSchedule } from "./api/scheduleApi";
+import creaturaLogo from "./assets/logo-square.png";
 import ConstraintsConfig from "./components/ConstraintsConfig";
 import EmployeeSidebar from "./components/EmployeeSidebar";
 import SolveDiagnostics from "./components/SolveDiagnostics";
@@ -707,51 +707,77 @@ export default function App() {
           sx={{
             borderBottom: 1,
             borderColor: "divider",
-            backdropFilter: "blur(8px)",
+            backdropFilter: "blur(10px)",
             backgroundColor: (muiTheme) =>
               muiTheme.palette.mode === "dark"
-                ? "rgba(15, 23, 38, 0.82)"
-                : "rgba(238, 242, 248, 0.84)",
+                ? "rgba(15, 23, 38, 0.9)"
+                : "rgba(238, 242, 248, 0.92)",
           }}
         >
           <Toolbar
             sx={{
-              alignItems: "flex-start",
-              gap: 2,
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 1,
               flexWrap: "wrap",
-              py: 1.5,
+              px: { xs: 1, sm: 2 },
+              py: 1,
+              minHeight: { xs: 68, sm: 72 },
             }}
           >
-            <Box sx={{ flex: "1 1 380px", minWidth: 260 }}>
-              <Typography variant="h5" sx={{ fontWeight: 700, letterSpacing: 0.2 }}>
-                CreaTura
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {t(
-                  "app.subtitle",
-                  {},
-                  "Employee scheduling workspace for shifts, assignments, and preferences."
-                )}
-              </Typography>
-              <Typography
-                variant="caption"
-                color={persistError ? "error.main" : "text.secondary"}
-                sx={{ display: "block", mt: 0.75 }}
-              >
-                {persistenceLine}
-              </Typography>
-            </Box>
-
-            <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", alignItems: "center" }}>
-              <Chip
-                label={`${t("header.language", {}, "Language")}: ${language.toUpperCase()}`}
-                size="small"
-                variant="outlined"
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{ alignItems: "center", minWidth: 0, flex: "1 1 260px" }}
+            >
+              <Box
+                component="img"
+                src={creaturaLogo}
+                alt="CreaTura logo"
+                sx={{
+                  width: { xs: 34, sm: 38 },
+                  height: { xs: 34, sm: 38 },
+                  borderRadius: 1.5,
+                  objectFit: "cover",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+                  flexShrink: 0,
+                }}
               />
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, letterSpacing: 0.15, lineHeight: 1.15 }}>
+                  CreaTura
+                </Typography>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: { xs: "none", md: "block" }, lineHeight: 1.2 }}
+                >
+                  {t(
+                    "app.subtitle",
+                    {},
+                    "Employee scheduling workspace for shifts, assignments, and preferences."
+                  )}
+                </Typography>
+              </Box>
+            </Stack>
+
+            <Stack
+              direction="row"
+              spacing={0.75}
+              sx={{
+                flex: "1 1 560px",
+                justifyContent: { xs: "flex-start", md: "flex-end" },
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}
+            >
               <ToggleButtonGroup
                 size="small"
                 exclusive
                 value={language}
+                sx={{ mr: 0.25 }}
                 onChange={(_, next) => {
                   if (!next) return;
                   setLanguage(next);
@@ -773,22 +799,17 @@ export default function App() {
                 <IconButton
                   color="primary"
                   onClick={() => setThemeMode((prev) => (prev === "dark" ? "light" : "dark"))}
+                  size="small"
                 >
                   {themeMode === "dark" ? <DarkModeRoundedIcon /> : <LightModeRoundedIcon />}
                 </IconButton>
               </Tooltip>
-            </Stack>
-
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{ width: "100%", justifyContent: "flex-end", flexWrap: "wrap" }}
-            >
               <Button
                 variant="contained"
                 startIcon={<AutoFixHighOutlinedIcon />}
                 onClick={onSolveClick}
                 disabled={!selectedEmployee || isSolving}
+                sx={{ whiteSpace: "nowrap" }}
               >
                 {isSolving ? t("app.solving", {}, "Solving...") : t("app.solve", {}, "Solve")}
               </Button>
@@ -796,6 +817,7 @@ export default function App() {
                 variant="outlined"
                 startIcon={<PeopleAltOutlinedIcon />}
                 onClick={() => setIsEmployeePanelOpen(true)}
+                sx={{ whiteSpace: "nowrap" }}
               >
                 {t("app.employees", {}, "Employees")}
               </Button>
@@ -804,6 +826,7 @@ export default function App() {
                 startIcon={<ViewWeekOutlinedIcon />}
                 onClick={() => setIsTemplatePopupOpen(true)}
                 disabled={!selectedEmployee}
+                sx={{ whiteSpace: "nowrap" }}
               >
                 {t("app.defaultTemplate", {}, "Default Template")}
               </Button>
@@ -811,6 +834,7 @@ export default function App() {
                 variant="outlined"
                 startIcon={<SettingsSuggestOutlinedIcon />}
                 onClick={() => setIsConstraintsPopupOpen(true)}
+                sx={{ whiteSpace: "nowrap" }}
               >
                 {t("app.constraintsConfig", {}, "Constraints Configure")}
               </Button>
@@ -818,6 +842,7 @@ export default function App() {
                 variant="outlined"
                 startIcon={<SettingsOutlinedIcon />}
                 onClick={() => setIsSettingsPopupOpen(true)}
+                sx={{ whiteSpace: "nowrap" }}
               >
                 {t("app.settings", {}, "Settings")}
               </Button>
@@ -827,6 +852,22 @@ export default function App() {
 
         <Container maxWidth={false} sx={{ px: { xs: 1.2, md: 2.2 }, py: 2.2 }}>
           <Stack spacing={1.5}>
+            <Box sx={{ display: "flex", justifyContent: { xs: "flex-start", md: "flex-end" } }}>
+              <Typography
+                variant="caption"
+                color={persistError ? "error.main" : "text.secondary"}
+                title={persistenceLine}
+                sx={{
+                  maxWidth: "100%",
+                  lineHeight: 1.2,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {persistenceLine}
+              </Typography>
+            </Box>
             {solveError ? <Alert severity="error">{solveError}</Alert> : null}
 
             {!selectedEmployee ? (

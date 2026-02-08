@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import {
   Box,
   Button,
@@ -7,6 +8,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  IconButton,
   MenuItem,
   Paper,
   Select,
@@ -47,7 +49,7 @@ export default function WeekCalendar({
   const [activeBlockKey, setActiveBlockKey] = useState("");
   const [activeSelection, setActiveSelection] = useState(null);
   const [editorDay, setEditorDay] = useState(null);
-  const [isInspectorVisible, setIsInspectorVisible] = useState(true);
+  const [isInspectorDialogOpen, setIsInspectorDialogOpen] = useState(false);
 
   const employeeMap = useMemo(
     () => Object.fromEntries(employees.map((worker) => [worker.id, worker])),
@@ -95,6 +97,23 @@ export default function WeekCalendar({
     }
   }, [editorDay, employee.overrides]);
 
+  function openInspector(selection) {
+    if (!selection) return;
+    const blockKey = `${selection.source.dayIso}:${selection.segment.shiftId}`;
+    setActiveBlockKey(blockKey);
+    setActiveSelection(selection);
+    setIsInspectorDialogOpen(true);
+  }
+
+  function makeSelection(cardDay, segment) {
+    const sourceDay = week.find((candidate) => candidate.iso === segment.source.dayIso) || cardDay;
+    return {
+      day: sourceDay,
+      source: segment.source,
+      segment,
+    };
+  }
+
   return (
     <Paper variant="outlined" sx={{ p: 1.5 }}>
       <Stack spacing={1.2}>
@@ -141,45 +160,23 @@ export default function WeekCalendar({
           </Stack>
         ) : null}
 
-        <Stack direction="row" justifyContent="flex-end">
-          <Button
-            type="button"
-            size="small"
-            variant="outlined"
-            onClick={() => setIsInspectorVisible((prev) => !prev)}
-          >
-            {isInspectorVisible
-              ? t("week.hideInspector", {}, "Hide Inspector")
-              : t("week.showInspector", {}, "Show Inspector")}
-          </Button>
-        </Stack>
-
         <Box
+          className="week-scroll"
           sx={{
-            display: "grid",
-            gridTemplateColumns: isInspectorVisible
-              ? { xs: "1fr", lg: "minmax(0, 1fr) 320px" }
-              : "1fr",
-            gap: 1.2,
+            width: "100%",
+            overflowX: "auto",
+            pb: 0.6,
           }}
         >
           <Box
-            className="week-scroll"
+            className="week-grid"
             sx={{
-              width: "100%",
-              overflowX: "auto",
-              pb: 0.6,
+              minWidth: 980,
+              display: "grid",
+              gridTemplateColumns: `repeat(${week.length}, minmax(138px, 1fr))`,
+              gap: 0.8,
             }}
           >
-            <Box
-              className="week-grid"
-              sx={{
-                minWidth: 980,
-                display: "grid",
-                gridTemplateColumns: `repeat(${week.length}, minmax(138px, 1fr))`,
-                gap: 0.8,
-              }}
-            >
               {week.map((day, index) => {
                 const override = employee.overrides[day.iso] || null;
                 const usesOverride = Boolean(override);
@@ -300,9 +297,33 @@ export default function WeekCalendar({
                               }
                               onClick={() => {
                                 setActiveBlockKey(blockKey);
-                                setActiveSelection({ day, source: segment.source, segment });
+                                setActiveSelection(makeSelection(day, segment));
+                              }}
+                              onDoubleClick={() => {
+                                openInspector(makeSelection(day, segment));
                               }}
                             />
+                          );
+                        })}
+                        {segments.map((segment) => {
+                          const top = (segment.start / MINUTES_IN_DAY) * 100;
+                          const height = Math.max(((segment.end - segment.start) / MINUTES_IN_DAY) * 100, 2);
+                          const middle = Math.min(98, Math.max(2, top + height / 2));
+                          return (
+                            <IconButton
+                              key={`${segment.id}-edit`}
+                              size="small"
+                              className="shift-edit-button"
+                              aria-label={t("week.openInspector", {}, "Open shift inspector")}
+                              title={t("week.openInspector", {}, "Open shift inspector")}
+                              style={{ top: `${middle}%` }}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openInspector(makeSelection(day, segment));
+                              }}
+                            >
+                              <EditOutlinedIcon fontSize="inherit" />
+                            </IconButton>
                           );
                         })}
                         {segments.map((segment) => {
@@ -409,147 +430,144 @@ export default function WeekCalendar({
             </DialogActions>
           </Dialog>
 
-          {isInspectorVisible ? (
-            <Paper
-              variant="outlined"
-              sx={{
-                p: 1.2,
-                height: "fit-content",
-                position: { lg: "sticky" },
-                top: { lg: 86 },
-              }}
-            >
-              <Stack spacing={1}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                  {t("week.inspectorTitle", {}, "Shift Inspector")}
+          <Dialog
+            open={isInspectorDialogOpen}
+            onClose={() => setIsInspectorDialogOpen(false)}
+            maxWidth="sm"
+            fullWidth
+          >
+            <DialogTitle>{t("week.inspectorTitle", {}, "Shift Inspector")}</DialogTitle>
+            <DialogContent dividers>
+              {!activeSelection || !selectedShift ? (
+                <Typography variant="body2" color="text.secondary">
+                  {t("week.selectShiftHint", {}, "Select a shift block to edit employee constraints.")}
                 </Typography>
-                {!activeSelection || !selectedShift ? (
-                  <Typography variant="body2" color="text.secondary">
-                    {t("week.selectShiftHint", {}, "Select a shift block to edit employee constraints.")}
+              ) : (
+                <Stack spacing={1}>
+                  <Typography variant="caption" color="text.secondary">
+                    {activeSelection.day.label} {activeSelection.day.dateText}
                   </Typography>
-                ) : (
-                  <Stack spacing={1}>
-                    <Typography variant="caption" color="text.secondary">
-                      {activeSelection.day.label} {activeSelection.day.dateText}
-                    </Typography>
-                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                      {t(
-                        "week.shiftLabel",
-                        {
-                          name:
-                            selectedShift.name?.trim() ||
-                            defaultShiftName(activeSelection.segment.shiftIndex || 0),
-                        },
-                        `Shift: ${
+                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                    {t(
+                      "week.shiftLabel",
+                      {
+                        name:
                           selectedShift.name?.trim() ||
-                          defaultShiftName(activeSelection.segment.shiftIndex || 0)
-                        }`
-                      )}
-                    </Typography>
+                          defaultShiftName(activeSelection.segment.shiftIndex || 0),
+                      },
+                      `Shift: ${
+                        selectedShift.name?.trim() ||
+                        defaultShiftName(activeSelection.segment.shiftIndex || 0)
+                      }`
+                    )}
+                  </Typography>
 
-                    <Stack spacing={0.8}>
-                      {selectedConstraints.length === 0 ? (
-                        <Typography variant="body2" color="text.secondary">
-                          {t("week.noConstraints", {}, "No constraints yet.")}
-                        </Typography>
-                      ) : (
-                        selectedConstraints.map((constraint, index) => {
-                          const usedByOthers = new Set(
-                            selectedConstraints
-                              .filter((_, candidateIndex) => candidateIndex !== index)
-                              .map((candidate) => candidate.employeeId)
-                          );
-                          return (
-                            <Paper key={`${constraint.employeeId}-${index}`} variant="outlined" sx={{ p: 0.8 }}>
-                              <Stack spacing={0.8}>
+                  <Stack spacing={0.8}>
+                    {selectedConstraints.length === 0 ? (
+                      <Typography variant="body2" color="text.secondary">
+                        {t("week.noConstraints", {}, "No constraints yet.")}
+                      </Typography>
+                    ) : (
+                      selectedConstraints.map((constraint, index) => {
+                        const usedByOthers = new Set(
+                          selectedConstraints
+                            .filter((_, candidateIndex) => candidateIndex !== index)
+                            .map((candidate) => candidate.employeeId)
+                        );
+                        return (
+                          <Paper key={`${constraint.employeeId}-${index}`} variant="outlined" sx={{ p: 0.8 }}>
+                            <Stack spacing={0.8}>
+                              <Select
+                                size="small"
+                                value={constraint.employeeId}
+                                onChange={(e) =>
+                                  onUpdateShiftConstraint(
+                                    activeSelection.source,
+                                    activeSelection.segment.shiftId,
+                                    index,
+                                    { employeeId: e.target.value }
+                                  )
+                                }
+                              >
+                                <MenuItem value="">
+                                  {t("week.selectEmployee", {}, "Select employee")}
+                                </MenuItem>
+                                {employees.map((worker) => (
+                                  <MenuItem
+                                    key={worker.id}
+                                    value={worker.id}
+                                    disabled={usedByOthers.has(worker.id)}
+                                  >
+                                    {worker.name}
+                                  </MenuItem>
+                                ))}
+                              </Select>
+                              <Stack direction={{ xs: "column", sm: "row" }} spacing={0.8}>
                                 <Select
                                   size="small"
-                                  value={constraint.employeeId}
+                                  sx={{ flex: 1 }}
+                                  value={constraint.preference}
                                   onChange={(e) =>
                                     onUpdateShiftConstraint(
                                       activeSelection.source,
                                       activeSelection.segment.shiftId,
                                       index,
-                                      { employeeId: e.target.value }
+                                      { preference: e.target.value }
                                     )
                                   }
                                 >
-                                  <MenuItem value="">
-                                    {t("week.selectEmployee", {}, "Select employee")}
-                                  </MenuItem>
-                                  {employees.map((worker) => (
-                                    <MenuItem
-                                      key={worker.id}
-                                      value={worker.id}
-                                      disabled={usedByOthers.has(worker.id)}
-                                    >
-                                      {worker.name}
-                                    </MenuItem>
-                                  ))}
+                                  {PREFERENCE_KEYS.map((key) => {
+                                    const meta = PREFERENCE_META[key];
+                                    return (
+                                      <MenuItem key={key} value={key}>
+                                        {meta.emoji} {meta.label}
+                                      </MenuItem>
+                                    );
+                                  })}
                                 </Select>
-                                <Stack direction={{ xs: "column", sm: "row" }} spacing={0.8}>
-                                  <Select
-                                    size="small"
-                                    sx={{ flex: 1 }}
-                                    value={constraint.preference}
-                                    onChange={(e) =>
-                                      onUpdateShiftConstraint(
-                                        activeSelection.source,
-                                        activeSelection.segment.shiftId,
-                                        index,
-                                        { preference: e.target.value }
-                                      )
-                                    }
-                                  >
-                                    {PREFERENCE_KEYS.map((key) => {
-                                      const meta = PREFERENCE_META[key];
-                                      return (
-                                        <MenuItem key={key} value={key}>
-                                          {meta.emoji} {meta.label}
-                                        </MenuItem>
-                                      );
-                                    })}
-                                  </Select>
-                                  <Button
-                                    type="button"
-                                    size="small"
-                                    variant="outlined"
-                                    color="error"
-                                    onClick={() =>
-                                      onRemoveShiftConstraint(
-                                        activeSelection.source,
-                                        activeSelection.segment.shiftId,
-                                        index
-                                      )
-                                    }
-                                  >
-                                    {t("week.removeConstraint", {}, "Remove")}
-                                  </Button>
-                                </Stack>
+                                <Button
+                                  type="button"
+                                  size="small"
+                                  variant="outlined"
+                                  color="error"
+                                  onClick={() =>
+                                    onRemoveShiftConstraint(
+                                      activeSelection.source,
+                                      activeSelection.segment.shiftId,
+                                      index
+                                    )
+                                  }
+                                >
+                                  {t("week.removeConstraint", {}, "Remove")}
+                                </Button>
                               </Stack>
-                            </Paper>
-                          );
-                        })
-                      )}
-                    </Stack>
-
-                    <Button
-                      type="button"
-                      size="small"
-                      variant="outlined"
-                      disabled={selectedConstraints.length >= employees.length}
-                      onClick={() =>
-                        onAddShiftConstraint(activeSelection.source, activeSelection.segment.shiftId)
-                      }
-                    >
-                      {t("week.addConstraint", {}, "+ Add Constraint")}
-                    </Button>
+                            </Stack>
+                          </Paper>
+                        );
+                      })
+                    )}
                   </Stack>
-                )}
-              </Stack>
-            </Paper>
-          ) : null}
-        </Box>
+
+                  <Button
+                    type="button"
+                    size="small"
+                    variant="outlined"
+                    disabled={selectedConstraints.length >= employees.length}
+                    onClick={() =>
+                      onAddShiftConstraint(activeSelection.source, activeSelection.segment.shiftId)
+                    }
+                  >
+                    {t("week.addConstraint", {}, "+ Add Constraint")}
+                  </Button>
+                </Stack>
+              )}
+            </DialogContent>
+          <DialogActions>
+              <Button onClick={() => setIsInspectorDialogOpen(false)}>
+                {t("common.close", {}, "Close")}
+              </Button>
+            </DialogActions>
+          </Dialog>
       </Stack>
     </Paper>
   );
